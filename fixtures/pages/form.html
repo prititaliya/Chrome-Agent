@@ -15,13 +15,16 @@
     </form>
     <div id="result"></div>
     <script>
-      document.getElementById("contact").addEventListener("submit", (event) => {
-        const submitter = event.submitter;
-        if (submitter && submitter.dataset.trustedOnly === "true" && event.isTrusted === false) {
+      // Realistic isTrusted guard: the CLICK handler (not the submit event)
+      // decides. Synthetic clicks are refused visibly; trusted clicks submit.
+      document.querySelector("button[data-trusted-only]").addEventListener("click", (event) => {
+        if (event.isTrusted === false) {
           event.preventDefault();
-          document.getElementById("result").textContent = "rejected: untrusted submit";
-          return;
+          event.stopPropagation();
+          document.getElementById("result").textContent = "rejected: untrusted click";
         }
+      });
+      document.getElementById("contact").addEventListener("submit", () => {
         document.getElementById("result").textContent = "submitted";
       });
     </script>

@@ -7,5 +7,7 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     // Playwright specs live under tests/e2e and run via pnpm e2e, not vitest.
     include: ["tests/unit/**/*.test.ts"],
+    // The default child-process pool crashes tinypool here (stack overflow on worker teardown).
+    pool: "threads",
   },
 });

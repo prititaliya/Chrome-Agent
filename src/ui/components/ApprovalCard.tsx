@@ -1,40 +1,32 @@
-interface ApprovalCardProps {
-  toolName: string;
+import type { ApprovalAnswer } from "../../tools/executor";
+import { AlertIcon } from "./Icons";
+
+interface Props {
+  label: string;
   reason: string;
-  argsSummary: string;
-  onApprove: () => void;
-  onDeny: () => void;
+  onAnswer: (answer: ApprovalAnswer) => void;
 }
 
-// Blocking card for irreversible actions. Shows the exact tool, reason, and
-// argument summary — the model never sees full field values, but the user
-// always does (form_submit previews land with the form tool).
-export default function ApprovalCard({
-  toolName,
-  reason,
-  argsSummary,
-  onApprove,
-  onDeny,
-}: ApprovalCardProps) {
+export default function ApprovalCard({ label, reason, onAnswer }: Props) {
   return (
-    <section role="alertdialog" aria-label={`Approve ${toolName}`}>
-      <h2>Approval required</h2>
-      <dl>
-        <div>
-          <dt>Action</dt>
-          <dd>{toolName}</dd>
-        </div>
-        <div>
-          <dt>Why approval is needed</dt>
-          <dd>{reason}</dd>
-        </div>
-        <div>
-          <dt>Arguments</dt>
-          <dd>{argsSummary}</dd>
-        </div>
-      </dl>
-      <button onClick={onApprove}>Approve</button>
-      <button onClick={onDeny}>Deny</button>
-    </section>
+    <div className="approval" role="alertdialog" aria-label="Approve action">
+      <div className="approval-head">
+        <AlertIcon size={16} />
+        <strong>Allow this action?</strong>
+      </div>
+      <p className="approval-label">{label}</p>
+      <p className="approval-reason">{reason}</p>
+      <div className="approval-actions">
+        <button className="btn primary" onClick={() => onAnswer("approve")}>
+          Allow
+        </button>
+        <button className="btn" onClick={() => onAnswer("deny")}>
+          Deny
+        </button>
+        <button className="btn ghost" onClick={() => onAnswer("always")} title="Don't ask again in this chat">
+          Allow for this chat
+        </button>
+      </div>
+    </div>
   );
 }

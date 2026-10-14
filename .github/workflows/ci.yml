@@ -1,0 +1,28 @@
+name: CI
+
+# typecheck -> lint -> unit tests -> build -> Chrome e2e.
+# E2E talks to the scripted mock model in scripts/mock-provider.mjs, so it never
+# spends real API tokens; tests/e2e/live.spec.ts is skipped without LIVE_PROVIDERS_FILE.
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - name: Install the Playwright-bundled Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: E2E (Chrome with the built extension, headless)
+        run: pnpm e2e

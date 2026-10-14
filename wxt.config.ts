@@ -1,50 +1,36 @@
 import { defineConfig } from "wxt";
 
-// Single manifest source for both targets. MV3 is forced for Firefox here
-// (WXT defaults Firefox to MV2); the CLI alternative is
-// `wxt build -b firefox --mv3`. Never single-dash `-mv3`.
+// Chrome-only MV3 build. `<all_urls>` host access covers every page the agent
+// reads or drives and any provider base URL the user configures.
 export default defineConfig({
   manifestVersion: 3,
   modules: ["@wxt-dev/module-react"],
-  manifest: ({ browser }) => {
-    const permissions = ["storage", "tabs", "scripting", "alarms", "activeTab", "downloads"];
-    const manifest = {
-      name: "Comet-like Browser Assistant",
-      permissions: [...permissions],
-      // Provider API origins only. Page access is per-origin optional.
-      host_permissions: ["https://openrouter.ai/*"],
-      optional_host_permissions: ["http://*/*", "https://*/*"],
-      action: {},
-      // No manual content_scripts block: WXT generates it from
-      // entrypoints/content (ISOLATED world, all_frames). A hand-written
-      // block without js/css would duplicate or invalidate the manifest.
-    };
-
-    if (browser === "chrome") {
-      return {
-        ...manifest,
-        minimum_chrome_version: "116",
-        // `debugger` is declared but runtime-OFF by default (Settings toggle).
-        permissions: [...manifest.permissions, "sidePanel", "offscreen", "debugger"],
-        side_panel: {
-          default_path: "sidepanel.html",
-        },
-      };
-    }
-
-    // Firefox: no debugger / sidePanel / offscreen.
-    return {
-      ...manifest,
-      browser_specific_settings: {
-        gecko: {
-          id: "comet-like-assistant@example.local",
-          strict_min_version: "128.0",
-        },
+  manifest: {
+    name: "Comet Assistant",
+    description: "AI assistant in your side panel that reads, searches, and drives your browser.",
+    minimum_chrome_version: "116",
+    permissions: [
+      "storage",
+      "unlimitedStorage",
+      "tabs",
+      "scripting",
+      "sidePanel",
+      "debugger",
+      "contextMenus",
+      "activeTab",
+    ],
+    host_permissions: ["<all_urls>"],
+    icons: { 16: "icon/16.png", 32: "icon/32.png", 48: "icon/48.png", 128: "icon/128.png" },
+    action: {
+      default_title: "Open Comet Assistant",
+      default_icon: { 16: "icon/16.png", 32: "icon/32.png", 48: "icon/48.png", 128: "icon/128.png" },
+    },
+    side_panel: { default_path: "sidepanel.html" },
+    commands: {
+      _execute_action: {
+        suggested_key: { default: "Alt+A", mac: "Alt+A" },
+        description: "Open the assistant side panel",
       },
-      sidebar_action: {
-        default_panel: "sidepanel.html",
-        default_title: "Assistant",
-      },
-    };
+    },
   },
 });

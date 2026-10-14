@@ -1,78 +1,98 @@
-// Declarative provider registry types. Adding a provider or model is a
-// config entry — never a code change in the agent loop.
+export type Wire = "chat" | "responses";
 
-export type Wire = "chat.completions" | "responses";
-export type ToolsCapability = "native" | "prompted" | "unsupported";
-
-/** How the bytes arrive, decided before the first token. */
-export interface StreamWire {
-  framing: "sse" | "ndjson" | "json-body";
-  /** false => accumulate nothing; wait for the whole body. */
-  emitsToolCallDeltas: boolean;
-  /** false => fall back to the local tokenizer estimate. */
-  emitsUsage: boolean;
-  includeUsageParam?: "stream_options" | "none";
-  /** Watchdog per stream, ms. */
-  idleTimeoutMs: number;
+/** USD per 1M tokens. */
+export interface ModelPricing {
+  input: number;
+  output: number;
+  /** Price for cache-hit input tokens; defaults to `input`. */
+  cachedInput?: number;
 }
 
-export interface ProviderCapabilities {
-  tools: ToolsCapability;
-  toolChoice: boolean;
-  parallelToolCalls: boolean;
-  streamWire: StreamWire;
-  reasoningParam?: "reasoning_effort" | "reasoning" | "none";
-  reasoningDeltas: "none" | "reasoning" | "reasoning_content" | "reasoning_details";
-  jsonMode: "json_schema" | "json_object" | "none";
+export interface ModelConfig {
+  id: string;
+  label?: string;
+  /** Accepts image input (screenshots). */
   vision: boolean;
-  maxToolsPerRequest?: number;
+  /** Supports native function calling (required for browser control). */
+  tools: boolean;
+  pricing?: ModelPricing;
+  /** Max context length in tokens, when known. */
+  contextWindow?: number;
 }
 
-export type Quirk =
-  "strip_temperature_when_reasoning" | "no_tool_choice_required" | "no_stream_options_on_responses_wire";
-
-export interface ModelDef {
+export interface ProviderConfig {
   id: string;
-  label: string;
-  /** REQUIRED — no default, no guessing. TypeScript enforces it. */
-  wire: Wire;
-  contextWindow: number;
-  maxOutput: number;
-  supportsTools: boolean;
-  supportsVision: boolean;
-  reasoning: boolean;
-  quirks?: Quirk[];
-  pricePerMTokIn?: number;
-  pricePerMTokOut?: number;
-  summarizerCapable?: boolean;
-}
-
-export interface ProviderDef {
-  id: string;
-  label: string;
-  /** No trailing slash. User gateways come from env, never hardcoded. */
+  name: string;
   baseUrl: string;
-  /** Must equal the manifest host_permissions entry (asserted by pnpm gates). */
-  origins: string[];
-  /** Resolved in the background only; keys never leave storage.local. */
-  auth: { type: "bearer"; keyStorageKey: string };
-  endpoints: { chat: string; models?: string; modelsNeedsAuth?: boolean };
-  /** Default wire inherited by /models-discovered models. */
+  apiKey: string;
   wire: Wire;
-  capabilities: ProviderCapabilities;
-  quirks: Quirk[];
   headers?: Record<string, string>;
-  retry: {
-    statuses: number[];
-    maxAttempts: number;
-    backoffMs: number[];
-    honorRetryAfter: boolean;
-  };
-  defaults: { model: string; temperature: number; maxTokens: number };
+  models: ModelConfig[];
+  preset?: "openrouter" | "opencode-go" | "custom";
 }
 
-/** A registered provider: its definition plus hand-written models. */
-export interface ProviderEntry {
-  def: ProviderDef;
-  models: ModelDef[];
+export interface ModelRef {
+  providerId: string;
+  modelId: string;
+}
+
+export type ContentPart = { type: "text"; text: string } | { type: "image"; dataUrl: string };
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  /** Raw JSON arguments exactly as the model produced them. */
+  args: string;
+}
+
+export interface ApiMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | ContentPart[];
+  toolCalls?: ToolCall[];
+  toolCallId?: string;
+}
+
+export interface ToolSchema {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+export type StreamEvent =
+  | { type: "text"; text: string }
+  | { type: "reasoning"; text: string }
+  | { type: "toolCall"; call: ToolCall }
+  | {
+      type: "usage";
+      inputTokens: number;
+      outputTokens: number;
+      /** Input tokens served from the provider's prompt cache (included in inputTokens). */
+      cachedTokens?: number;
+      /** Reasoning tokens (included in outputTokens). */
+      reasoningTokens?: number;
+      /** Cost in USD as billed by the provider, when it reports one (e.g. OpenRouter). */
+      cost?: number;
+    }
+  | { type: "done"; reason: string };
+
+export interface StreamRequest {
+  provider: ProviderConfig;
+  model: ModelConfig;
+  messages: ApiMessage[];
+  tools?: ToolSchema[];
+  signal?: AbortSignal;
+  maxTokens?: number;
+  /** Stable per-conversation id; some providers use it for routing and prompt caching. */
+  sessionId?: string;
+  fetchImpl?: typeof fetch;
+}
+
+export class ProviderError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "ProviderError";
+  }
 }

@@ -1,9 +1,10 @@
-// Zero-dependency static server for fixture pages + a POST /echo endpoint
-// (lets tests assert a form_submit preview against a real received body).
+// Zero-dependency static server for fixture pages, a POST /echo endpoint,
+// and a scripted OpenAI-compatible mock model under /v1 (see mock-provider.mjs).
 // Usage: node scripts/serve-fixtures.mjs [port]  (default 4173)
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
+import { handleMockProvider } from "./mock-provider.mjs";
 
 const ROOT = new URL("../fixtures/pages/", import.meta.url);
 const PORT = Number(process.argv[2] ?? 4173);
@@ -15,6 +16,8 @@ const TYPES = {
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
+
+  if (handleMockProvider(req, res, url)) return;
 
   if (req.method === "POST" && url.pathname === "/echo") {
     let body = "";

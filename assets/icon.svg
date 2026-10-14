@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <!-- Deep space squircle background -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0B0F19" />
+      <stop offset="55%" stop-color="#111827" />
+      <stop offset="100%" stop-color="#1E1B4B" />
+    </linearGradient>
+
+    <!-- Subtle inner border glow -->
+    <linearGradient id="border-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.45" />
+      <stop offset="50%" stop-color="#818CF8" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#C084FC" stop-opacity="0.4" />
+    </linearGradient>
+
+    <!-- Comet tail gradient (Cyan -> Indigo -> Violet) -->
+    <linearGradient id="comet-tail" x1="15%" y1="85%" x2="85%" y2="15%">
+      <stop offset="0%" stop-color="#6366F1" stop-opacity="0" />
+      <stop offset="35%" stop-color="#818CF8" stop-opacity="0.65" />
+      <stop offset="75%" stop-color="#38BDF8" stop-opacity="0.95" />
+      <stop offset="100%" stop-color="#ECFEFF" stop-opacity="1" />
+    </linearGradient>
+
+    <!-- Agent cursor gradient -->
+    <linearGradient id="cursor-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#BAE6FD" />
+    </linearGradient>
+
+    <!-- Soft glow filter for the comet head -->
+    <filter id="glow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Squircle Base -->
+  <rect x="6" y="6" width="116" height="116" rx="28" fill="url(#bg-grad)" />
+  <rect x="7.5" y="7.5" width="113" height="113" rx="26.5" fill="none" stroke="url(#border-grad)" stroke-width="3" />
+
+  <!-- Subtle Browser/HUD Grid Horizon -->
+  <circle cx="64" cy="64" r="40" fill="none" stroke="#38BDF8" stroke-opacity="0.1" stroke-width="1.5" stroke-dasharray="4 6" />
+
+  <!-- Sweeping Comet Orbital Arc -->
+  <path
+    d="M 26 92 C 18 62, 42 26, 86 28"
+    fill="none"
+    stroke="url(#comet-tail)"
+    stroke-width="12"
+    stroke-linecap="round"
+    filter="url(#glow)"
+  />
+
+  <!-- Secondary Fast Slipstream Arc -->
+  <path
+    d="M 38 98 C 58 106, 96 88, 100 52"
+    fill="none"
+    stroke="url(#comet-tail)"
+    stroke-width="6"
+    stroke-linecap="round"
+    opacity="0.7"
+  />
+
+  <!-- Autonomous Agent Navigation Arrow / Comet Core (Centered for 16x16 legibility) -->
+  <path
+    d="M 94 24 L 40 52 L 63 63 L 74 86 Z"
+    fill="url(#cursor-grad)"
+    stroke="#0284C7"
+    stroke-width="2"
+    stroke-linejoin="round"
+    filter="url(#glow)"
+  />
+
+  <!-- AI Spark Star at the Tip -->
+  <path
+    d="M 94 12 Q 94 24 106 24 Q 94 24 94 36 Q 94 24 82 24 Q 94 24 94 12 Z"
+    fill="#FFFFFF"
+  />
+
+  <!-- Status Node Dot (Bottom Left) -->
+  <circle cx="30" cy="90" r="4.5" fill="#38BDF8" />
+</svg>

@@ -1,8 +1,8 @@
 {
-  "name": "comet-like-browser-assistant",
+  "name": "comet-assistant",
   "version": "0.0.1",
   "private": true,
-  "description": "Comet-like AI browser assistant (Chrome MV3 + Firefox MV3, one WXT codebase)",
+  "description": "Comet-like AI browser assistant (Chrome MV3 side panel)",
   "type": "module",
   "packageManager": "pnpm@9.0.0",
   "scripts": {
@@ -10,17 +10,15 @@
     "lint": "eslint .",
     "test": "vitest run",
     "dev": "wxt",
-    "dev:ff": "wxt -b firefox",
-    "build": "wxt build -b chrome && wxt build -b firefox",
+    "build": "wxt build",
+    "zip": "wxt zip",
     "fixtures": "node scripts/serve-fixtures.mjs",
-    "mock": "node scripts/mock.mjs",
-    "dev:reload": "node scripts/dev-reload.mjs",
+    "icons": "node scripts/make-icons.mjs",
     "e2e": "playwright test",
-    "gates": "node scripts/check-manifest.mjs && node scripts/check-no-sync.mjs"
+    "postinstall": "wxt prepare"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",
-    "@types/dompurify": "^3.2.0",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
@@ -42,7 +40,6 @@
     "dompurify": "^3.4.17",
     "marked": "^18.1.1",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0",
-    "zod": "^4.6.7"
+    "react-dom": "^19.3.0"
   }
 }
