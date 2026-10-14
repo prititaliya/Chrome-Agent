@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fixture SPA Dashboard</title>
+  </head>
+  <body>
+    <h1>Dashboard</h1>
+    <div id="app">Loading…</div>
+    <script>
+      // SPA fixture: content is rendered after a short delay, mimicking a
+      // client-side data fetch the agent must wait for before extracting.
+      setTimeout(function () {
+        var app = document.getElementById("app");
+        app.textContent = "";
+        var table = document.createElement("table");
+        table.innerHTML =
+          "<thead><tr><th>Metric</th><th>Value</th></tr></thead>" +
+          "<tbody><tr><td>Visits</td><td>1,204</td></tr>" +
+          "<tr><td>Signups</td><td>87</td></tr></tbody>";
+        app.appendChild(table);
+      }, 150);
+    </script>
+  </body>
+</html>

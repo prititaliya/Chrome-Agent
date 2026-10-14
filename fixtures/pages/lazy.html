@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fixture Lazy Page</title>
+    <style>
+      .spacer {
+        height: 4000px;
+        background: linear-gradient(#fff, #ddd);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Lazy content below</h1>
+    <div class="spacer"></div>
+    <ul id="feed">
+      <li>Item one</li>
+      <li>Item two</li>
+    </ul>
+    <button id="load-more" type="button">Load more</button>
+    <p id="bottom-marker">Bottom reached</p>
+    <script>
+      // Paginated fixture: reveals one more feed item per trigger. The button
+      // is the deterministic path used by tests; scrolling near the bottom
+      // calls the same function in a real browser.
+      (function () {
+        var items = ["Item three", "Item four", "Item five"];
+        function more() {
+          var list = document.getElementById("feed");
+          if (!items.length) return;
+          var li = document.createElement("li");
+          li.textContent = items.shift();
+          list.appendChild(li);
+        }
+        document.getElementById("load-more").addEventListener("click", more);
+        document.addEventListener(
+          "scroll",
+          function () {
+            var y = window.scrollY || document.documentElement.scrollTop || 0;
+            if (y > 100) more();
+          },
+          true,
+        );
+      })();
+    </script>
+  </body>
+</html>
