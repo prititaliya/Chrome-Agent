@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fixture Form</title>
+  </head>
+  <body>
+    <h1>Contact form</h1>
+    <form id="contact" action="shop.html" method="GET">
+      <label>Name <input type="text" name="name" /></label>
+      <label>Email <input type="text" name="email" /></label>
+      <!-- Synthetic (untrusted) clicks are ignored by this button's handler;
+           only real trusted input activates it. See plan Task 23. -->
+      <button type="submit" data-trusted-only="true">Send message</button>
+    </form>
+    <div id="result"></div>
+    <script>
+      document.getElementById("contact").addEventListener("submit", (event) => {
+        const submitter = event.submitter;
+        if (submitter && submitter.dataset.trustedOnly === "true" && event.isTrusted === false) {
+          event.preventDefault();
+          document.getElementById("result").textContent = "rejected: untrusted submit";
+          return;
+        }
+        document.getElementById("result").textContent = "submitted";
+      });
+    </script>
+  </body>
+</html>

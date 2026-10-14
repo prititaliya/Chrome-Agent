@@ -1,0 +1,18 @@
+{
+  "turns": [
+    {
+      "text": "I will snapshot the page first.",
+      "toolCalls": [{ "id": "call_1", "name": "browser_snapshot", "args": {} }]
+    },
+    {
+      "text": "Now extracting the price table.",
+      "toolCalls": [
+        { "id": "call_2", "name": "browser_click", "args": { "ref": 3 } },
+        { "id": "call_3", "name": "browser_extract", "args": { "kind": "table" } }
+      ]
+    },
+    {
+      "text": "{\"price\": \"$12.50\"}"
+    }
+  ]
+}
