@@ -62,6 +62,11 @@ function Footer({ message, live, onRegenerate }: { message: UiMessage; live: boo
   return (
     <>
       <div className="msg-foot">
+        {message.autoReason && (
+          <span className="auto-tag" title={`Auto picked this model: ${message.autoReason}`}>
+            Auto
+          </span>
+        )}
         {message.model && (
           <span className="model-tag" title={`${message.providerName ?? ""} · ${message.modelRef?.modelId ?? message.model}`}>
             {message.model}

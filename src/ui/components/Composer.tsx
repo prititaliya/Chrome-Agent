@@ -1,10 +1,20 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { isScriptableUrl } from "../../browser/content";
 import { listTabs, type TabInfo } from "../../browser/tabs";
-import { AtIcon, CloseIcon, SendIcon, StopIcon } from "./Icons";
+import type { QueuedMessage } from "../hooks/useChat";
+import { AtIcon, CloseIcon, QueueIcon, SendIcon, StopIcon } from "./Icons";
 
 interface Props {
   running: boolean;
+  /** While running, Enter steers the current task. */
+  onSteer: (text: string) => void;
+  /** Alt+Enter (or the Queue button) saves the message for after the current task. */
+  onQueue: (text: string) => void;
+  queued: QueuedMessage[];
+  queuePaused: boolean;
+  onRemoveQueued: (id: string) => void;
+  onSendQueuedNow: (id: string) => void;
+  onRunQueue: () => void;
   activeTab: TabInfo | null;
   attachPage: boolean;
   includeCurrent: boolean;
@@ -70,8 +80,16 @@ export default function Composer(props: Props) {
   }
 
   function submit() {
-    if (running || draft.trim() === "") return;
-    props.onSend(draft);
+    if (draft.trim() === "") return;
+    if (running) props.onSteer(draft);
+    else props.onSend(draft);
+    setPicker(null);
+  }
+
+  function queueDraft() {
+    if (draft.trim() === "") return;
+    if (running) props.onQueue(draft);
+    else props.onSend(draft);
     setPicker(null);
   }
 
@@ -96,13 +114,42 @@ export default function Composer(props: Props) {
     }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      submit();
+      if (e.altKey) queueDraft();
+      else submit();
     }
   }
 
   const showCurrent = props.attachPage && activeTab !== null;
+  const hasDraft = draft.trim() !== "";
   return (
     <div className="composer">
+      {props.queued.length > 0 && (
+        <div className="queue" aria-label="Queued messages">
+          <div className="queue-head">
+            <span>
+              {props.queued.length} queued{props.queuePaused ? " (paused)" : running ? ", runs after this task" : ""}
+            </span>
+            {props.queuePaused && !running && (
+              <button className="link-btn small" onClick={props.onRunQueue}>
+                Run queued ({props.queued.length})
+              </button>
+            )}
+          </div>
+          {props.queued.map((q) => (
+            <div key={q.id} className="queue-item">
+              <span className="queue-text" title={q.text}>
+                {q.text}
+              </span>
+              <button className="link-btn small" onClick={() => props.onSendQueuedNow(q.id)} title={running ? "Send now as a steer" : "Send now"}>
+                Send now
+              </button>
+              <button className="chip-x" aria-label={`Remove queued message ${q.text}`} onClick={() => props.onRemoveQueued(q.id)}>
+                <CloseIcon size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {picker && (
         <div className="picker" role="listbox" aria-label="Attach a tab">
           <div className="picker-title">Attach a tab</div>
@@ -159,15 +206,27 @@ export default function Composer(props: Props) {
           ref={inputRef}
           rows={1}
           value={draft}
-          placeholder={running ? "Working…" : "Ask anything, or tell me what to do…"}
+          placeholder={running ? "Steer the agent, or queue a follow-up…" : "Ask anything, or tell me what to do…"}
           aria-label="Message"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
         />
         {running ? (
-          <button className="send stop" onClick={props.onStop} aria-label="Stop">
-            <StopIcon size={16} />
-          </button>
+          <>
+            {hasDraft && (
+              <>
+                <button className="send ghost" onClick={queueDraft} aria-label="Queue" title="Queue: run after this task (Alt+Enter)">
+                  <QueueIcon size={16} />
+                </button>
+                <button className="send" onClick={submit} aria-label="Steer" title="Steer: tell the agent now (Enter)">
+                  <SendIcon size={16} />
+                </button>
+              </>
+            )}
+            <button className="send stop" onClick={props.onStop} aria-label="Stop">
+              <StopIcon size={16} />
+            </button>
+          </>
         ) : (
           <button className="send" onClick={submit} disabled={draft.trim() === ""} aria-label="Send">
             <SendIcon size={16} />

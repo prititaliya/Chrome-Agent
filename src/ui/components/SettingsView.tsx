@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { ProviderConfig } from "../../providers/types";
 import { clearConversations } from "../../storage/conversations";
 import { removeProvider, saveSettings, upsertProvider, type Settings } from "../../storage/settings";
+import AutoModelSettings from "./AutoModelSettings";
 import ProviderEditor, { blankProvider } from "./ProviderEditor";
 
 interface Props {
@@ -84,6 +85,8 @@ export default function SettingsView({ providers, settings }: Props) {
         </div>
       </section>
 
+      <AutoModelSettings providers={providers} settings={settings} />
+
       <section>
         <h2>Browser control</h2>
         <label className="radio">
@@ -140,7 +143,7 @@ export default function SettingsView({ providers, settings }: Props) {
 
       <section>
         <h2>Data</h2>
-        <p className="muted">Conversations are stored only in this browser.</p>
+        <p className="muted">Conversations and their digests are stored only in this browser.</p>
         <button
           className="btn danger small"
           onClick={() => {

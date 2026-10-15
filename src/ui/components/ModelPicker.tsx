@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatPrice, formatTokens } from "../../agent/usage";
 import type { ModelConfig, ModelRef, ProviderConfig } from "../../providers/types";
-import { CheckIcon, ChevronIcon, SearchIcon } from "./Icons";
+import { CheckIcon, ChevronIcon, SearchIcon, SparkIcon } from "./Icons";
 
 interface Props {
   providers: ProviderConfig[];
@@ -9,6 +9,11 @@ interface Props {
   onChange: (ref: ModelRef) => void;
   onManage: () => void;
   disabled?: boolean;
+  /** Auto mode is on: a model is picked per message. */
+  auto: boolean;
+  onAuto: () => void;
+  /** The model Auto picked for the latest answer. */
+  lastAutoModel?: string;
 }
 
 /** Short display name: drop the vendor prefix of ids like "openai/gpt-5.6-luna". */
@@ -31,7 +36,7 @@ function ModelMeta({ model }: { model: ModelConfig }) {
   );
 }
 
-export default function ModelPicker({ providers, value, onChange, onManage, disabled }: Props) {
+export default function ModelPicker({ providers, value, onChange, onManage, disabled, auto, onAuto, lastAutoModel }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
@@ -79,12 +84,22 @@ export default function ModelPicker({ providers, value, onChange, onManage, disa
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label="Model"
-        title={current ? `${provider?.name} · ${current.id}` : "Choose a model"}
+        title={auto ? "Auto: picks the best allowed model per message" : current ? `${provider?.name} · ${current.id}` : "Choose a model"}
       >
-        <span className="mp-current">
-          <span className="mp-name">{current ? modelName(current) : "Choose a model"}</span>
-          {provider && current && <span className="mp-provider">{provider.name}</span>}
-        </span>
+        {auto ? (
+          <span className="mp-current">
+            <span className="mp-name mp-auto-name">
+              <SparkIcon size={12} />
+              Auto
+            </span>
+            {lastAutoModel && <span className="mp-provider">{lastAutoModel.split("/").pop()}</span>}
+          </span>
+        ) : (
+          <span className="mp-current">
+            <span className="mp-name">{current ? modelName(current) : "Choose a model"}</span>
+            {provider && current && <span className="mp-provider">{provider.name}</span>}
+          </span>
+        )}
         <ChevronIcon size={13} />
       </button>
       {open && (
@@ -94,6 +109,25 @@ export default function ModelPicker({ providers, value, onChange, onManage, disa
             <input autoFocus placeholder="Search models" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search models" />
           </label>
           <div className="mp-list" role="listbox" aria-label="Models">
+            {query.trim() === "" && (
+              <button
+                role="option"
+                aria-selected={auto}
+                className={auto ? "mp-item mp-auto selected" : "mp-item mp-auto"}
+                onClick={() => {
+                  onAuto();
+                  setOpen(false);
+                }}
+              >
+                <span className="mp-item-main">
+                  <span className="mp-item-name">
+                    <SparkIcon size={12} /> Auto
+                  </span>
+                  <span className="mp-meta">Picks the best allowed model per message, free when possible</span>
+                </span>
+                {auto && <CheckIcon size={14} />}
+              </button>
+            )}
             {groups.length === 0 && <p className="mp-empty">No models match.</p>}
             {groups.map(({ provider: p, models }) => (
               <div key={p.id} className="mp-group">
@@ -102,7 +136,7 @@ export default function ModelPicker({ providers, value, onChange, onManage, disa
                   {!p.apiKey && <span className="tag tag-warn">no key</span>}
                 </div>
                 {models.map((m) => {
-                  const selected = p.id === value?.providerId && m.id === value?.modelId;
+                  const selected = !auto && p.id === value?.providerId && m.id === value?.modelId;
                   return (
                     <button
                       key={m.id}

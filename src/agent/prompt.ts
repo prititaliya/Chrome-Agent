@@ -12,6 +12,12 @@ export interface PromptInfo {
   canRemember?: boolean;
   /** Short-term memory: summary of the older part of this conversation. */
   summary?: string;
+  /** The ask_user tool is available. */
+  canAsk?: boolean;
+  /** search_sessions / read_session are available. */
+  canSearchChats?: boolean;
+  /** The user's most recent other chats, newest first. */
+  recentChats?: { id: string; title: string; updatedAt: number }[];
 }
 
 export function buildSystemPrompt(info: PromptInfo): string {
@@ -43,8 +49,10 @@ export function buildSystemPrompt(info: PromptInfo): string {
       "- Use the site's own menus, links, filters and search box before leaving the site. To fill a search box: type with submit=true.",
       "- Use web_search and read_url only for information that is clearly not on the current site (news, facts, other sites), or when the user asks you to search the web.",
       "- To go to another URL, use navigate in the working tab. Use open_tab only when the user asks for a new tab or needs to keep the current page open.",
-      "- Work step by step: act once, check the result (the tool's reply or a fresh snapshot), then decide the next action, until the goal is met. If you're blocked by a captcha or missing information, stop and say so.",
-      "- Signing in: when a task needs the user signed in, do it yourself. For the email or username, use what the user or memory says, otherwise call get_my_email. For the password, call use_saved_password on the username or password field so Chrome fills the login it has saved, then click the sign-in button. If the site emails a verification code, call get_email_code (with the site name as from) and type the code it returns. Only ask the user when no saved password works, or a passkey, Touch ID, SMS code, authenticator app or captcha needs them; then continue once they say it's done.",
+      info.canAsk
+        ? "- Work step by step: act once, check the result (the tool's reply or a fresh snapshot), then decide the next action, until the goal is met. If you're blocked by a captcha or need information only the user has, call ask_user."
+        : "- Work step by step: act once, check the result (the tool's reply or a fresh snapshot), then decide the next action, until the goal is met. If you're blocked by a captcha or missing information, stop and say so.",
+      `- Signing in: when a task needs the user signed in, do it yourself. For the email or username, use what the user or memory says, otherwise call get_my_email. For the password, call use_saved_password on the username or password field so Chrome fills the login it has saved, then click the sign-in button. If the site emails a verification code, call get_email_code (with the site name as from) and type the code it returns. Only ask the user when no saved password works, or a passkey, Touch ID, SMS code, authenticator app or captcha needs them${info.canAsk ? ': call ask_user (e.g. "Please complete the captcha in the tab" with options "Done, continue" and "Stop"), then continue in the same tab.' : "; then continue once they say it's done."}`,
       "- If an action has no visible effect, snapshot again and try a different element or approach instead of repeating the same call.",
       "- Some actions (purchases, sending messages, submitting forms, deleting) require the user's approval; the system asks them automatically. If they deny, stop and explain.",
       "- Never guess or invent passwords, and never enter payment details or personal data the user did not give you. Never reveal verification codes or passwords outside the site that asked for them.",
@@ -52,6 +60,15 @@ export function buildSystemPrompt(info: PromptInfo): string {
     );
     if (info.vision) {
       lines.push("- screenshot shows you the visible part of a tab; use it when layout, images, or charts matter.");
+    }
+    if (info.canAsk) {
+      lines.push(
+        "",
+        "Asking the user (ask_user):",
+        "- Ask when the request is ambiguous, when there are several valid choices that are the user's to make (which item, flight, size, date, quantity, account, address or recipient), or when you need something you can't find yourself (a phone number, an SMS or authenticator code, a preference).",
+        "- If a guess would change the outcome, ask instead of guessing. Otherwise keep going, and mention small assumptions in your final answer. Don't ask for confirmation of routine steps, and don't ask what the page, memory, earlier chats or your tools can answer.",
+        "- One short question at a time, with 2-5 concrete options. The user may pick an option, type their own answer, or skip.",
+      );
     }
   } else {
     lines.push("", "This model has no tool access: answer from the attached page context and your own knowledge.");
@@ -75,6 +92,21 @@ export function buildSystemPrompt(info: PromptInfo): string {
         "- If a new fact changes a saved one, call remember with replaces_id. If the user asks you to forget something, call forget with its id.",
       );
     }
+  }
+
+  if (info.canSearchChats) {
+    lines.push("", "Earlier chats:");
+    const recent = info.recentChats ?? [];
+    if (recent.length > 0) {
+      lines.push("Most recent other chats (newest first):");
+      for (const c of recent) lines.push(`- [${c.id}] "${c.title}" (${new Date(c.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })})`);
+    } else {
+      lines.push("(no earlier chats yet)");
+    }
+    lines.push(
+      "- You can't see other chats directly. When the user refers to earlier sessions (\"what did we do\", \"last time\", \"which X did we...\") or an earlier chat would help with the current task, call search_sessions, then read_session for details.",
+      "- Cite every chat you used as a Markdown link [Chat title](#chat/<id>) with its date. Secret values are redacted in earlier chats; if the user needs one, point them to the chat link.",
+    );
   }
 
   if (info.summary) {

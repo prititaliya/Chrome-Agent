@@ -61,7 +61,7 @@ export default function UsageView({ onOpenSettings }: Props) {
     const url = URL.createObjectURL(new Blob([usageCsv(records ?? [])], { type: "text/csv" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `comet-usage-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `uncomet-usage-${new Date().toISOString().slice(0, 10)}.csv`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }

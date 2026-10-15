@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { runTurn, type TurnOptions } from "../../src/agent/loop";
+import { runTurn, STEER_PREFIX, STEER_SKIPPED, type TurnOptions } from "../../src/agent/loop";
 import type { ApiMessage, StreamEvent, StreamRequest, ToolCall } from "../../src/providers/types";
 
 type Script = StreamEvent[][];
@@ -137,6 +137,52 @@ describe("agent turn", () => {
     const result = await runTurn(options(stream, { maxSteps: 3 }));
     expect(result.end).toBe("max_steps");
     expect(n).toBe(3);
+  });
+
+  it("skips the rest of a batch when the user steers, and passes the update to the model", async () => {
+    const steering: string[] = [];
+    const { stream, requests } = scripted([[call("a", "click", '{"ref":1}'), call("b", "click", '{"ref":2}')], [{ type: "text", text: "Switched" }]]);
+    const executed: string[] = [];
+    const steps: string[] = [];
+    const result = await runTurn(
+      options(stream, {
+        takeSteering: () => steering.splice(0),
+        executor: {
+          execute: async (c: ToolCall) => {
+            executed.push(c.id);
+            steering.push("pick the cheaper one");
+            return { ok: true, text: "clicked" };
+          },
+        },
+        callbacks: { onText: () => {}, onReasoning: () => {}, onStep: (s) => steps.push(`${s.tool}:${s.status}`) },
+      }),
+    );
+    expect(result.end).toBe("done");
+    expect(executed).toEqual(["a"]);
+    expect(steps).toContain("click:denied");
+    const sent = requests[1]!;
+    expect(sent.filter((m) => m.role === "tool").map((m) => m.content)).toEqual(["clicked", STEER_SKIPPED]);
+    expect(sent.at(-1)).toEqual({ role: "user", content: `${STEER_PREFIX}pick the cheaper one` });
+    expect(result.api.some((m) => m.content === `${STEER_PREFIX}pick the cheaper one`)).toBe(true);
+  });
+
+  it("runs one more round when the user steers while the model is answering", async () => {
+    const steering: string[] = [];
+    let n = 0;
+    const stream = async function* (req: StreamRequest): AsyncGenerator<StreamEvent> {
+      n += 1;
+      if (n === 1) {
+        steering.push("also mention the price");
+        yield { type: "text", text: "First answer" };
+        return;
+      }
+      const last = req.messages.at(-1)!;
+      yield { type: "text", text: `Got: ${String(last.content)}` };
+    };
+    const result = await runTurn(options(stream, { takeSteering: () => steering.splice(0) }));
+    expect(result.end).toBe("done");
+    expect(n).toBe(2);
+    expect(result.api.at(-1)).toEqual({ role: "assistant", content: `Got: ${STEER_PREFIX}also mention the price` });
   });
 
   it("ignores tool calls for chat-only models", async () => {

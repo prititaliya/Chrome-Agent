@@ -39,6 +39,35 @@ export interface MemoryTools {
   recall: (query: string) => Promise<string>;
 }
 
+export interface AskRequest {
+  question: string;
+  options: string[];
+  multiple: boolean;
+}
+
+/** Earlier chats; each returns the text reported back to the model. */
+export interface SessionTools {
+  search: (args: { query?: string; since?: string; until?: string; limit?: number }) => Promise<string>;
+  read: (id: string, args: { query?: string; offset?: number; maxChars?: number }) => Promise<string>;
+}
+
+export const ASK_SKIPPED = "User skipped the question; continue with your best judgment, or stop and explain.";
+
+/** Trim, drop empties and duplicates, keep at most 6. */
+export function cleanOptions(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    const text = str(item).replace(/\s+/g, " ").trim().slice(0, 120);
+    if (text === "" || seen.has(text.toLowerCase())) continue;
+    seen.add(text.toLowerCase());
+    out.push(text);
+    if (out.length === 6) break;
+  }
+  return out;
+}
+
 export interface ExecutorDeps {
   controlMode: "cdp" | "dom";
   searchEngine: SearchEngine;
@@ -47,6 +76,9 @@ export interface ExecutorDeps {
   riskyAllowed: () => boolean;
   allowRisky: () => void;
   memory?: MemoryTools;
+  /** Show a question card and wait; null means the user skipped. */
+  ask?: (request: AskRequest) => Promise<string | null>;
+  sessions?: SessionTools;
   /** Defaults to the user's Gmail inbox feed. */
   fetchInbox?: () => Promise<Inbox>;
   profileEmail?: () => Promise<string>;
@@ -173,6 +205,12 @@ export function describeCall(name: string, args: Args): string {
       return "Forgetting a memory";
     case "recall":
       return `Searching memory: ${str(args["query"])}`;
+    case "ask_user":
+      return `Asked: ${str(args["question"]).slice(0, 120)}`;
+    case "search_sessions":
+      return args["query"] ? `Searching earlier chats: ${str(args["query"])}` : "Listing earlier chats";
+    case "read_session":
+      return args["query"] ? `Reading an earlier chat for "${str(args["query"])}"` : "Reading an earlier chat";
     default:
       return name;
   }
@@ -297,6 +335,16 @@ export class ToolExecutor {
   private async status(tabId: number, label: string): Promise<void> {
     this.statusLabel = label;
     await this.glow(tabId, true);
+  }
+
+  /** Briefly show a message in the working tab's status pill (e.g. after the user steers). */
+  async flash(label: string): Promise<void> {
+    const tabId = this.workingTabId;
+    if (tabId === null || !this.glowing.has(tabId)) return;
+    const previous = this.statusLabel;
+    await this.status(tabId, label);
+    await sleep(1500);
+    if (this.statusLabel === label && this.glowing.has(tabId)) await this.status(tabId, previous);
   }
 
   async finish(): Promise<void> {
@@ -584,8 +632,49 @@ export class ToolExecutor {
         if (name === "forget") return { ok: true, text: await memory.forget(str(args["id"])) };
         return { ok: true, text: await memory.recall(str(args["query"])) };
       }
+      case "ask_user":
+        return this.askUser(args);
+      case "search_sessions": {
+        if (!this.deps.sessions) return { ok: false, text: "Remembering past chats is turned off in Settings." };
+        const text = await this.deps.sessions.search({
+          query: str(args["query"]).trim() || undefined,
+          since: str(args["since"]).trim() || undefined,
+          until: str(args["until"]).trim() || undefined,
+          limit: int(args["limit"]),
+        });
+        return { ok: true, text };
+      }
+      case "read_session": {
+        if (!this.deps.sessions) return { ok: false, text: "Remembering past chats is turned off in Settings." };
+        const id = str(args["id"]).trim();
+        if (id === "") throw new Error("id is required (from search_sessions).");
+        const text = await this.deps.sessions.read(id, {
+          query: str(args["query"]).trim() || undefined,
+          offset: int(args["offset"]),
+          maxChars: int(args["max_chars"]),
+        });
+        return { ok: true, text };
+      }
       default:
         return { ok: false, text: `Unknown tool "${name}".` };
+    }
+  }
+
+  private async askUser(args: Args): Promise<ToolOutcome> {
+    if (!this.deps.ask) return { ok: false, text: "Asking the user is not available here; continue with your best judgment." };
+    const question = str(args["question"]).trim();
+    if (question === "") throw new Error("question is required.");
+    const options = cleanOptions(args["options"]);
+    const multiple = args["allow_multiple"] === true && options.length > 1;
+    const tabId = this.workingTabId;
+    const glowing = tabId !== null && this.glowing.has(tabId);
+    if (glowing) await this.status(tabId, "Waiting for your answer");
+    try {
+      const answer = await this.deps.ask({ question, options, multiple });
+      if (answer === null || answer.trim() === "") return { ok: true, text: ASK_SKIPPED };
+      return { ok: true, text: `User answered: "${answer.trim()}"` };
+    } finally {
+      if (glowing) await this.status(tabId, "Thinking");
     }
   }
 

@@ -66,6 +66,39 @@ async function reply(body, res) {
   });
   const question = lastUser >= 0 ? stripContext(textOf(messages[lastUser])) : "";
   const results = messages.slice(lastUser + 1).filter((m) => m.role === "tool").map(textOf);
+  const system = textOf(messages.find((m) => m.role === "system") ?? {});
+
+  // Background chat digest (cross-chat memory).
+  if (/You write a short digest of one finished chat/.test(system)) {
+    const transcript = textOf(messages.at(-1) ?? {});
+    const digest = /api key/i.test(transcript)
+      ? "- Created an API key named demo on the fixtures site (value not stored).\nKeywords: api key, demo, fixtures"
+      : "- Chatted about the fixture page.\nKeywords: fixture";
+    return streamText(res, digest, body);
+  }
+
+  // The user steered the running task.
+  const steer = question.match(/^\[User update while you were working\]: (.*)$/s);
+  if (steer) return streamText(res, `Updated: ${steer[1]}`, body);
+
+  if (/count slowly/i.test(question)) {
+    return streamToolCall(res, "wait", { seconds: 2, n: results.length }, body);
+  }
+
+  if (/book a table/i.test(question)) {
+    if (results.length === 0) return streamToolCall(res, "ask_user", { question: "For how many people?", options: ["2 people", "4 people"] }, body);
+    return streamText(res, `Booked. ${results[0]}`, body);
+  }
+
+  if (/create an api key/i.test(question)) {
+    return streamText(res, "Created API key sk-test-abcdefghijklmnop1234 named demo on the fixtures site.", body);
+  }
+
+  if (/which api keys did we create/i.test(question)) {
+    if (results.length === 0) return streamToolCall(res, "search_sessions", { query: "api key" }, body);
+    const id = results[0].match(/^\[(\w+)\]/m)?.[1] ?? "none";
+    return streamText(res, `From [your earlier chat](#chat/${id}): ${results[0].split("\n")[1] ?? ""}`, body);
+  }
 
   if (/what is this page/i.test(question)) {
     const ctx = lastUser >= 0 ? textOf(messages[lastUser]).match(/<page_context[^>]*title="([^"]*)"/) : null;
@@ -89,8 +122,8 @@ async function reply(body, res) {
   }
 
   if (/what is my favorite color/i.test(question)) {
-    const system = messages.find((m) => m.role === "system");
-    const known = system ? textOf(system).match(/favorite color is (\w+)/i) : null;
+    const memoryBlock = system.match(/<memory>[\s\S]*?<\/memory>/)?.[0] ?? "";
+    const known = memoryBlock.match(/favorite color is (\w+)/i);
     return streamText(res, known ? `Your favorite color is ${known[1]}.` : "I don't know your favorite color.", body);
   }
 

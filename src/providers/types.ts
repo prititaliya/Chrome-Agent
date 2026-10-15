@@ -8,6 +8,9 @@ export interface ModelPricing {
   cachedInput?: number;
 }
 
+/** How capable a model is, for Auto mode. */
+export type ModelTier = "basic" | "strong" | "best";
+
 export interface ModelConfig {
   id: string;
   label?: string;
@@ -18,6 +21,8 @@ export interface ModelConfig {
   pricing?: ModelPricing;
   /** Max context length in tokens, when known. */
   contextWindow?: number;
+  /** Set only when the user picks a tier; otherwise it is guessed from price and name. */
+  tier?: ModelTier;
 }
 
 export interface ProviderConfig {

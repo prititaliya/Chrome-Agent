@@ -38,7 +38,12 @@ export interface TurnOptions {
   callbacks: TurnCallbacks;
   stream: (req: StreamRequest) => AsyncGenerator<StreamEvent>;
   sessionId?: string;
+  /** Messages the user sent while the turn was running; each call drains them. */
+  takeSteering?: () => string[];
 }
+
+export const STEER_PREFIX = "[User update while you were working]: ";
+export const STEER_SKIPPED = "Skipped: the user sent a new instruction before this ran.";
 
 export type TurnEnd = "done" | "cancelled" | "max_steps" | "loop" | "error";
 
@@ -70,9 +75,16 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
   let lastSignature = "";
   let repeats = 0;
   let stepCounter = 0;
+  const steering: string[] = [];
+  const pollSteering = () => {
+    steering.push(...(opts.takeSteering?.() ?? []));
+    return steering.length > 0;
+  };
 
   for (let step = 0; step < opts.maxSteps; step++) {
     if (opts.signal.aborted) return finish("cancelled");
+    pollSteering();
+    for (const update of steering.splice(0)) turn.push({ role: "user", content: `${STEER_PREFIX}${update}` });
     let text = "";
     let reasoningChars = 0;
     const calls: ToolCall[] = [];
@@ -124,6 +136,7 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
     const usable = opts.executor ? calls : [];
     turn.push({ role: "assistant", content: text, ...(usable.length > 0 ? { toolCalls: usable } : {}) });
     if (usable.length === 0) {
+      if (pollSteering()) continue;
       if (text.trim() === "") return finish("error", "The model returned an empty response. Try again or pick another model.");
       return finish("done");
     }
@@ -131,6 +144,17 @@ export async function runTurn(opts: TurnOptions): Promise<TurnResult> {
     const images: ContentPart[] = [];
     for (const call of usable) {
       if (opts.signal.aborted) return finish("cancelled");
+      if (pollSteering()) {
+        opts.callbacks.onStep({
+          id: `s${++stepCounter}-${call.id}`,
+          tool: call.name,
+          label: `Skipped: ${describeCall(call.name, parseArgs(call.args) ?? {})}`,
+          status: "denied",
+          detail: "You sent a new instruction before this ran.",
+        });
+        turn.push({ role: "tool", toolCallId: call.id, content: STEER_SKIPPED });
+        continue;
+      }
       const step: Step = {
         id: `s${++stepCounter}-${call.id}`,
         tool: call.name,

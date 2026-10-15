@@ -6,8 +6,20 @@ import { defaultProviders } from "../providers/presets";
 import type { ModelRef, ProviderConfig } from "../providers/types";
 import type { SearchEngine } from "../browser/protocol";
 
+export interface AutoSettings {
+  /** Pick a model per message instead of using `model`. */
+  enabled: boolean;
+  /** Models Auto may choose; null means every model whose provider has a key. */
+  allowed: ModelRef[] | null;
+  preferFree: boolean;
+  /** "jev" asks TypeSafe's Jev classifier through OpenRouter; "rules" stays offline. */
+  classifier: "jev" | "rules";
+}
+
 export interface Settings {
+  /** The manually chosen model (used when Auto is off). */
   model: ModelRef | null;
+  auto: AutoSettings;
   maxSteps: number;
   searchEngine: SearchEngine;
   /** "cdp" drives pages with trusted input via chrome.debugger; "dom" uses synthetic events only. */
@@ -20,10 +32,15 @@ export interface Settings {
   memory: boolean;
   /** Let the assistant save and delete memories on its own. */
   autoMemory: boolean;
+  /** Keep a short digest of each chat and let the assistant search earlier chats. */
+  sessionMemory: boolean;
 }
+
+export const DEFAULT_AUTO: AutoSettings = { enabled: false, allowed: null, preferFree: true, classifier: "jev" };
 
 export const DEFAULT_SETTINGS: Settings = {
   model: null,
+  auto: DEFAULT_AUTO,
   maxSteps: 30,
   searchEngine: "google",
   controlMode: "cdp",
@@ -31,13 +48,18 @@ export const DEFAULT_SETTINGS: Settings = {
   attachPage: true,
   memory: true,
   autoMemory: true,
+  sessionMemory: true,
 };
+
+function withDefaults(stored: Partial<Settings> | null | undefined): Settings {
+  return { ...DEFAULT_SETTINGS, ...stored, auto: { ...DEFAULT_AUTO, ...stored?.auto } };
+}
 
 const settingsItem = storage.defineItem<Settings>("local:settings:v2", { fallback: DEFAULT_SETTINGS });
 const providersItem = storage.defineItem<ProviderConfig[] | null>("local:providers:v2", { fallback: null });
 
 export async function getSettings(): Promise<Settings> {
-  return { ...DEFAULT_SETTINGS, ...(await settingsItem.getValue()) };
+  return withDefaults(await settingsItem.getValue());
 }
 
 export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
@@ -47,7 +69,7 @@ export async function saveSettings(patch: Partial<Settings>): Promise<Settings> 
 }
 
 export function watchSettings(listener: (settings: Settings) => void): () => void {
-  return settingsItem.watch((value) => listener({ ...DEFAULT_SETTINGS, ...value }));
+  return settingsItem.watch((value) => listener(withDefaults(value)));
 }
 
 export async function getProviders(): Promise<ProviderConfig[]> {

@@ -159,6 +159,28 @@ describe("prompt and tools", () => {
     expect(buildSystemPrompt({ now: new Date(), canAct: false, vision: false })).not.toContain("working tab");
   });
 
+  it("tells the model when to ask the user and how to use earlier chats", () => {
+    const prompt = buildSystemPrompt({
+      now: new Date(),
+      canAct: true,
+      vision: false,
+      canAsk: true,
+      canSearchChats: true,
+      recentChats: [{ id: "c1", title: "OpenRouter setup", updatedAt: Date.parse("2026-10-12T12:00:00") }],
+    });
+    expect(prompt).toContain("Asking the user (ask_user)");
+    expect(prompt).toContain("If a guess would change the outcome, ask instead of guessing");
+    expect(prompt).toContain('options "Done, continue" and "Stop"');
+    expect(prompt).toContain('- [c1] "OpenRouter setup" (Oct 12, 2026)');
+    expect(prompt).toContain("[Chat title](#chat/<id>)");
+    const plain = buildSystemPrompt({ now: new Date(), canAct: true, vision: false });
+    expect(plain).not.toContain("ask_user");
+    expect(plain).not.toContain("search_sessions");
+    expect(toolsFor({ vision: false, screenshots: false, ask: true, sessions: true }).map((t) => t.name)).toEqual(
+      expect.arrayContaining(["ask_user", "search_sessions", "read_session"]),
+    );
+  });
+
   it("offers memory tools only when enabled and routes them to the memory deps", async () => {
     expect(toolsFor({ vision: false, screenshots: false }).some((t) => t.name === "remember")).toBe(false);
     expect(toolsFor({ vision: false, screenshots: false, memory: true }).map((t) => t.name)).toEqual(expect.arrayContaining(["remember", "forget", "recall"]));

@@ -3,11 +3,12 @@ import iconUrl from "../../../assets/icon.svg";
 import { costLabel, formatTokens } from "../../agent/usage";
 import type { TabInfo } from "../../browser/tabs";
 import { conversationUsage, type Conversation } from "../../storage/conversations";
-import type { PendingApproval } from "../hooks/useChat";
+import type { PendingApproval, PendingQuestion, QueuedMessage } from "../hooks/useChat";
 import ApprovalCard from "./ApprovalCard";
 import Composer from "./Composer";
 import Markdown from "../markdown";
 import MessageView from "./MessageView";
+import QuestionCard from "./QuestionCard";
 import UsageBreakdown from "./UsageBreakdown";
 
 export const QUICK_ACTIONS: { label: string; hint: string; prompt: string }[] = [
@@ -21,6 +22,14 @@ interface Props {
   conv: Conversation;
   running: boolean;
   approval: PendingApproval | null;
+  question: PendingQuestion | null;
+  queued: QueuedMessage[];
+  queuePaused: boolean;
+  onSteer: (text: string) => void;
+  onQueue: (text: string) => void;
+  onRemoveQueued: (id: string) => void;
+  onSendQueuedNow: (id: string) => void;
+  onRunQueue: () => void;
   activeTab: TabInfo | null;
   attachPage: boolean;
   includeCurrent: boolean;
@@ -96,14 +105,14 @@ function ChatStats({ conv, contextWindow, providerName, onOpenUsage }: Pick<Prop
 }
 
 export default function ChatView(props: Props) {
-  const { conv, running, approval } = props;
+  const { conv, running, approval, question } = props;
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-  }, [conv.messages, approval]);
+  }, [conv.messages, approval, question]);
 
   const last = conv.messages[conv.messages.length - 1];
   return (
@@ -142,6 +151,15 @@ export default function ChatView(props: Props) {
           ))
         )}
         {approval && <ApprovalCard label={approval.label} reason={approval.reason} onAnswer={(answer) => approval.resolve(answer)} />}
+        {question && (
+          <QuestionCard
+            key={question.question}
+            question={question.question}
+            options={question.options}
+            multiple={question.multiple}
+            onAnswer={(answer) => question.resolve(answer)}
+          />
+        )}
       </div>
       <ChatStats conv={conv} contextWindow={props.contextWindow} providerName={props.providerName} onOpenUsage={props.onOpenUsage} />
       <Composer
@@ -156,6 +174,13 @@ export default function ChatView(props: Props) {
         onDraftChange={props.onDraftChange}
         onSend={props.onSend}
         onStop={props.onStop}
+        onSteer={props.onSteer}
+        onQueue={props.onQueue}
+        queued={props.queued}
+        queuePaused={props.queuePaused}
+        onRemoveQueued={props.onRemoveQueued}
+        onSendQueuedNow={props.onSendQueuedNow}
+        onRunQueue={props.onRunQueue}
       />
     </div>
   );

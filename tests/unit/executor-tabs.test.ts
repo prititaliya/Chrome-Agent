@@ -40,7 +40,7 @@ vi.mock("../../src/browser/content", () => ({
   },
 }));
 
-const { ToolExecutor, sameSite } = await import("../../src/tools/executor");
+const { ToolExecutor, sameSite, cleanOptions, ASK_SKIPPED } = await import("../../src/tools/executor");
 type Deps = ConstructorParameters<typeof ToolExecutor>[0];
 
 const tab = (id: number, url: string, active = false): TabInfo => ({ id, title: `Tab ${id}`, url, active });
@@ -147,5 +147,47 @@ describe("working tab", () => {
     const executor = new ToolExecutor(deps, 1);
     await executor.execute({ id: "1", name: "snapshot", args: "{}" }, noop);
     expect(state.sent[0]).toEqual({ tabId: 1, type: "cs/agentActive" });
+  });
+});
+
+describe("asking the user", () => {
+  it("cleans up options and returns the answer, or the skip text", async () => {
+    const asked: unknown[] = [];
+    const answers = ["4 people", null];
+    const ask = async (request: unknown) => {
+      asked.push(request);
+      return answers.shift() ?? null;
+    };
+    const executor = new ToolExecutor({ ...deps, ask } as unknown as Deps, 1);
+    const args = JSON.stringify({ question: "For how many?", options: [" 2 people ", "4 people", "", "2 people", 3], allow_multiple: true });
+    const answered = await executor.execute({ id: "1", name: "ask_user", args }, noop);
+    expect(asked[0]).toEqual({ question: "For how many?", options: ["2 people", "4 people", "3"], multiple: true });
+    expect(answered).toEqual({ ok: true, text: 'User answered: "4 people"' });
+
+    const skipped = await executor.execute({ id: "2", name: "ask_user", args: '{"question":"Which date?"}' }, noop);
+    expect(skipped).toEqual({ ok: true, text: ASK_SKIPPED });
+    expect(cleanOptions(Array.from({ length: 9 }, (_, i) => `o${i}`))).toHaveLength(6);
+  });
+
+  it("shows the question in the status pill while waiting", async () => {
+    let release: (answer: string) => void = () => {};
+    const ask = () => new Promise<string>((resolve) => (release = resolve));
+    const executor = new ToolExecutor({ ...deps, ask } as unknown as Deps, 1);
+    await executor.execute({ id: "1", name: "snapshot", args: "{}" }, noop);
+    state.sent = [];
+    const pending = executor.execute({ id: "2", name: "ask_user", args: '{"question":"Ok?"}' }, noop);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(state.sent).toContainEqual({ tabId: 1, type: "cs/agentActive" });
+    release("yes");
+    expect((await pending).text).toBe('User answered: "yes"');
+  });
+
+  it("reports when it can't ask or search earlier chats", async () => {
+    const executor = new ToolExecutor(deps, 1);
+    expect((await executor.execute({ id: "1", name: "ask_user", args: '{"question":"x"}' }, noop)).ok).toBe(false);
+    expect((await executor.execute({ id: "2", name: "search_sessions", args: "{}" }, noop)).text).toContain("turned off");
+    const sessions = { search: async () => "found", read: async (id: string) => `chat ${id}` };
+    const withSessions = new ToolExecutor({ ...deps, sessions } as unknown as Deps, 1);
+    expect((await withSessions.execute({ id: "3", name: "read_session", args: '{"id":"abc"}' }, noop)).text).toBe("chat abc");
   });
 });

@@ -5,6 +5,7 @@ import { storage } from "wxt/utils/storage";
 import type { ConversationSummary as ShortTermSummary } from "../agent/summary";
 import { emptyUsage, mergeUsage, type Usage } from "../agent/usage";
 import type { ApiMessage, ModelRef } from "../providers/types";
+import { clearDigests, deleteDigest } from "./digests";
 
 export type StepStatus = "running" | "ok" | "error" | "denied" | "awaiting";
 
@@ -31,6 +32,8 @@ export interface UiMessage {
   model?: string;
   modelRef?: ModelRef;
   providerName?: string;
+  /** Why Auto mode picked this model, e.g. "simple question, free model (rules)". */
+  autoReason?: string;
   /** Tokens and cost of every model request behind an assistant message. */
   usage?: Usage;
   durationMs?: number;
@@ -122,7 +125,10 @@ export async function saveConversation(conv: Conversation): Promise<void> {
   index.sort((a, b) => b.updatedAt - a.updatedAt);
   const evicted = index.splice(MAX_CONVERSATIONS);
   await indexItem.setValue(index);
-  for (const old of evicted) await storage.removeItem(convKey(old.id));
+  for (const old of evicted) {
+    await storage.removeItem(convKey(old.id));
+    await deleteDigest(old.id);
+  }
 }
 
 export async function loadConversation(id: string): Promise<Conversation | null> {
@@ -139,11 +145,13 @@ export async function listConversations(query = ""): Promise<ConversationSummary
 export async function deleteConversation(id: string): Promise<void> {
   await storage.removeItem(convKey(id));
   await indexItem.setValue((await indexItem.getValue()).filter((s) => s.id !== id));
+  await deleteDigest(id);
 }
 
 export async function clearConversations(): Promise<void> {
   for (const s of await indexItem.getValue()) await storage.removeItem(convKey(s.id));
   await indexItem.setValue([]);
+  await clearDigests();
 }
 
 export function watchConversations(listener: () => void): () => void {

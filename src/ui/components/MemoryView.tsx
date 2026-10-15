@@ -116,6 +116,15 @@ export default function MemoryView({ settings }: { settings: Settings }) {
             <small className="muted">It remembers preferences and facts you mention. Each save shows up as a step in the chat. Passwords, keys and card numbers are never stored.</small>
           </span>
         </label>
+        <label className="check">
+          <input type="checkbox" checked={settings.sessionMemory} onChange={(e) => void saveSettings({ sessionMemory: e.target.checked })} />
+          <span>
+            <strong>Remember past chats</strong>
+            <small className="muted">
+              After each chat, a short digest of what happened is saved in this browser, and the assistant can search and read earlier chats when you ask about them. Secret values (keys, passwords, codes) are blanked out.
+            </small>
+          </span>
+        </label>
       </section>
 
       <section>

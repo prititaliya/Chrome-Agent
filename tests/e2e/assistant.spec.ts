@@ -125,6 +125,90 @@ test("remembers facts across chats and forgets them from the Memory page", async
   await expect(panel.getByText("I don't know your favorite color.")).toBeVisible();
 });
 
+test("Auto mode routes a simple question to a free model", async ({ openPanel }, testInfo) => {
+  const free = { id: "mock-free", vision: false, tools: true, pricing: { input: 0, output: 0 } };
+  const panel = await openPanel([{ ...MOCK, models: [...MOCK.models, free] }], {
+    model: MODEL,
+    auto: { enabled: true, allowed: null, preferFree: true, classifier: "rules" },
+  });
+  await expect(panel.getByRole("button", { name: "Model", exact: true })).toContainText("Auto");
+  await ask(panel, "What is this page?");
+  await expect(panel.getByText('This page is titled "Fixture Form".')).toBeVisible();
+  const foot = panel.locator(".msg-assistant .msg-foot").last();
+  await expect(foot.locator(".auto-tag")).toHaveText("Auto");
+  await expect(foot.locator(".model-tag")).toHaveText("mock-free");
+  await expect(panel.locator(".step-label").filter({ hasText: "Auto: mock-free, simple question, free model" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Model", exact: true })).toContainText("mock-free");
+  await panel.screenshot({ path: testInfo.outputPath("auto.png") });
+
+  await panel.getByRole("button", { name: "Settings", exact: true }).click();
+  await expect(panel.getByText("2 of 2 models allowed")).toBeVisible();
+  await panel.getByRole("checkbox", { name: "Allow mock-1 in Auto" }).click();
+  await expect(panel.getByText("1 of 2 models allowed")).toBeVisible();
+  await expect(panel.getByRole("combobox", { name: "Tier for mock-free" })).toHaveValue("strong");
+  await panel.getByRole("heading", { name: "Auto model" }).scrollIntoViewIfNeeded();
+  await panel.screenshot({ path: testInfo.outputPath("auto-settings.png") });
+  await panel.getByRole("button", { name: "Back to chat" }).click();
+
+  await panel.getByRole("button", { name: "Model", exact: true }).click();
+  await panel.getByRole("option", { name: /mock-1/ }).click();
+  await expect(panel.getByRole("button", { name: "Model", exact: true })).not.toContainText("Auto");
+});
+
+test("the agent asks a question and continues with the answer", async ({ openPanel }, testInfo) => {
+  const panel = await openPanel([MOCK], { model: MODEL });
+  await ask(panel, "Book a table for tonight", { waitForEnd: false });
+  const card = panel.getByRole("dialog", { name: "Agent question" });
+  await expect(card).toContainText("For how many people?");
+  await panel.screenshot({ path: testInfo.outputPath("question.png") });
+  await card.getByRole("button", { name: "4 people" }).click();
+  await expect(card).toBeHidden();
+  await expect(panel.getByText('Booked. User answered: "4 people"')).toBeVisible();
+  await expect(panel.locator(".step-label").filter({ hasText: "Asked: For how many people?" })).toBeVisible();
+});
+
+test("steers a running task and runs a queued message afterwards", async ({ openPanel }, testInfo) => {
+  const panel = await openPanel([MOCK], { model: MODEL });
+  await ask(panel, "Count slowly", { waitForEnd: false });
+  await expect(panel.locator(".step-label").filter({ hasText: "Waiting 2s" }).first()).toBeVisible();
+
+  const box = panel.getByRole("textbox", { name: "Message" });
+  await box.fill("What is this page?");
+  await box.press("Alt+Enter");
+  await expect(panel.getByLabel("Queued messages")).toContainText("What is this page?");
+
+  await box.fill("stop counting and say hi");
+  await panel.screenshot({ path: testInfo.outputPath("steer.png") });
+  await box.press("Enter");
+  await expect(panel.locator(".step-label").filter({ hasText: "You: stop counting and say hi" })).toBeVisible();
+  await expect(panel.getByText("Updated: stop counting and say hi")).toBeVisible({ timeout: 20_000 });
+
+  await expect(panel.getByText('This page is titled "Fixture Form".')).toBeVisible({ timeout: 20_000 });
+  await expect(panel.getByLabel("Queued messages")).toHaveCount(0);
+});
+
+test("recalls earlier chats without revealing secrets", async ({ openPanel }, testInfo) => {
+  const panel = await openPanel([MOCK], { model: MODEL });
+  await ask(panel, "Create an API key for the demo");
+  await expect(panel.getByText(/Created API key sk-test-/)).toBeVisible();
+
+  await panel.getByRole("button", { name: "New chat" }).click();
+  await panel.getByRole("button", { name: "History", exact: true }).click();
+  await expect(panel.locator(".history-digest").first()).toContainText("Created an API key named demo", { timeout: 20_000 });
+  await panel.screenshot({ path: testInfo.outputPath("history-digest.png") });
+  await panel.getByRole("button", { name: "Back to chat" }).click();
+
+  await ask(panel, "Which API keys did we create?");
+  await expect(panel.locator(".step-label").filter({ hasText: "Searching earlier chats: api key" })).toBeVisible();
+  const answer = panel.locator(".msg-assistant .md").last();
+  await expect(answer).toContainText("Created an API key named demo");
+  await expect(answer).not.toContainText("sk-test-");
+  await panel.screenshot({ path: testInfo.outputPath("recall.png") });
+
+  await answer.getByRole("link", { name: "your earlier chat" }).click();
+  await expect(panel.getByText(/Created API key sk-test-/)).toBeVisible();
+});
+
 test("shows a readable error for a bad API key", async ({ openPanel }) => {
   const panel = await openPanel([{ ...MOCK, apiKey: "wrong" }], { model: MODEL });
   await ask(panel, "What is this page?");

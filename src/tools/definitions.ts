@@ -184,7 +184,54 @@ export const MEMORY_TOOLS: ToolSchema[] = [
   },
 ];
 
-export function toolsFor(options: { vision: boolean; screenshots: boolean; memory?: boolean }): ToolSchema[] {
+export const ASK_TOOL: ToolSchema = {
+  name: "ask_user",
+  description:
+    "Ask the user a question and wait for the answer. Use when the request is ambiguous, a choice is genuinely theirs, or you need something only they have. Offer 2-5 short options when possible; the user can also type their own answer or skip.",
+  parameters: schema(
+    {
+      question: { type: "string", description: "One short, specific question." },
+      options: { type: "array", items: { type: "string" }, description: "2-5 concrete choices, e.g. [\"2 people\", \"4 people\"]." },
+      allow_multiple: { type: "boolean", description: "Let the user pick several options." },
+    },
+    ["question"],
+  ),
+};
+
+export const SESSION_TOOLS: ToolSchema[] = [
+  {
+    name: "search_sessions",
+    description:
+      "Search the user's earlier chats with you (not this one). Returns matching chats with id, title, date and a digest of what happened. Without a query it lists recent chats, newest first.",
+    parameters: schema({
+      query: { type: "string", description: "Words to look for, e.g. \"api key openrouter\"." },
+      since: { type: "string", description: "Only chats updated on or after this date (YYYY-MM-DD)." },
+      until: { type: "string", description: "Only chats updated on or before this date (YYYY-MM-DD)." },
+      limit: { type: "integer", description: "Default 5, max 20." },
+    }),
+  },
+  {
+    name: "read_session",
+    description:
+      "Read an earlier chat by id (from search_sessions): numbered messages with the steps taken and their results. Use query to get only the matching messages, and offset to page through long chats. Secret values are redacted.",
+    parameters: schema(
+      {
+        id: { type: "string" },
+        query: { type: "string", description: "Only return messages that mention these words (plus one message around each)." },
+        offset: { type: "integer", description: "Start at this message number." },
+        max_chars: { type: "integer", description: "Default 12000, max 30000." },
+      },
+      ["id"],
+    ),
+  },
+];
+
+export function toolsFor(options: { vision: boolean; screenshots: boolean; memory?: boolean; ask?: boolean; sessions?: boolean }): ToolSchema[] {
   const browserTools = TOOLS.filter((t) => t.name !== "screenshot" || (options.vision && options.screenshots));
-  return options.memory ? [...browserTools, ...MEMORY_TOOLS] : browserTools;
+  return [
+    ...browserTools,
+    ...(options.ask ? [ASK_TOOL] : []),
+    ...(options.memory ? MEMORY_TOOLS : []),
+    ...(options.sessions ? SESSION_TOOLS : []),
+  ];
 }

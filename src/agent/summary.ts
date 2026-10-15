@@ -104,3 +104,73 @@ export async function summarizeConversation(opts: SummarizeOptions): Promise<{ t
   const approx = { input: Math.ceil((SUMMARIZER_PROMPT.length + body.length) / 4), output: Math.ceil(text.length / 4) };
   return { text, usage: requestUsage(usage, opts.model.pricing, approx) };
 }
+
+export const DIGEST_PROMPT = [
+  "You write a short digest of one finished chat between a user and an AI browser assistant, so the assistant can recall it in later chats.",
+  "Cover, as short bullet points (at most about 150 words):",
+  "- what the user wanted and whether it got done",
+  "- sites, services and accounts involved (names and URLs)",
+  "- things created, changed, bought, sent or booked, with their names",
+  "- decisions, key facts and numbers found, and anything left open",
+  "- dates mentioned",
+  "Never write secret values (API keys, tokens, passwords, verification codes, card numbers). Write e.g. \"Created an API key named prod on platform.example.com (value not stored).\"",
+  "End with one line: Keywords: <5-12 comma-separated search words>",
+  "Output only the digest.",
+].join("\n");
+
+export interface DigestOptions {
+  provider: ProviderConfig;
+  model: ModelConfig;
+  title: string;
+  createdAt: number;
+  api: ApiMessage[];
+  /** The chat's short-term summary of messages before `summaryUpTo`. */
+  summary?: { text: string; upTo: number };
+  stream: (req: StreamRequest) => AsyncGenerator<StreamEvent>;
+  redact: (text: string) => string;
+  signal?: AbortSignal;
+  sessionId?: string;
+}
+
+export async function digestSession(opts: DigestOptions): Promise<{ digest: string; keywords: string[]; usage: RequestUsage }> {
+  const recent = transcript(opts.api.slice(opts.summary?.upTo ?? 0)).slice(-40_000);
+  const body = opts.redact(
+    [
+      `Chat title: ${opts.title}`,
+      `Started: ${new Date(opts.createdAt).toDateString()}`,
+      opts.summary ? `<earlier_summary>\n${opts.summary.text}\n</earlier_summary>` : "",
+      `<transcript>\n${recent}\n</transcript>`,
+    ]
+      .filter(Boolean)
+      .join("\n\n"),
+  );
+  let text = "";
+  let usage: UsageEvent | null = null;
+  for await (const event of opts.stream({
+    provider: opts.provider,
+    model: opts.model,
+    messages: [
+      { role: "system", content: DIGEST_PROMPT },
+      { role: "user", content: body },
+    ],
+    maxTokens: 2000,
+    signal: opts.signal,
+    sessionId: opts.sessionId,
+  })) {
+    if (event.type === "text") text += event.text;
+    else if (event.type === "usage") usage = event;
+  }
+  text = text.trim();
+  if (text === "") throw new Error("The model returned an empty digest.");
+  const keywordLine = text.match(/^\s*keywords?\s*:\s*(.+)$/im);
+  const keywords = keywordLine
+    ? keywordLine[1]!
+        .split(",")
+        .map((k) => k.trim().toLowerCase())
+        .filter((k) => k !== "")
+        .slice(0, 12)
+    : [];
+  const digest = opts.redact(text.replace(/^\s*keywords?\s*:.*$/im, "").trim());
+  const approx = { input: Math.ceil((DIGEST_PROMPT.length + body.length) / 4), output: Math.ceil(text.length / 4) };
+  return { digest, keywords: keywords.map(opts.redact), usage: requestUsage(usage, opts.model.pricing, approx) };
+}

@@ -101,4 +101,13 @@ export const BrainIcon = ({ size }: IconProps) =>
     </>,
     size,
   );
+export const QuestionIcon = ({ size }: IconProps) =>
+  svg(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5v.01" />
+    </>,
+    size,
+  );
+export const QueueIcon = ({ size }: IconProps) => svg(<path d="M4 6h16M4 12h10M4 18h7M17 15v6M14 18h6" />, size);
 export const PencilIcon = ({ size }: IconProps) => svg(<path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />, size);
