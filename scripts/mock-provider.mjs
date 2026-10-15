@@ -94,6 +94,16 @@ async function reply(body, res) {
     return streamText(res, known ? `Your favorite color is ${known[1]}.` : "I don't know your favorite color.", body);
   }
 
+  if (/type my name here/i.test(question)) {
+    if (results.length === 0) {
+      const ctx = textOf(messages[lastUser]);
+      const ref = /working="true"/.test(ctx) ? refFor(ctx, "textbox", "Name") : null;
+      if (ref === null) return streamText(res, "No element refs in the page context.", body);
+      return streamToolCall(res, "type", { ref, text: "Grace" }, body);
+    }
+    return streamText(res, `Done in place. ${results[0]}`, body);
+  }
+
   if (/fill the form/i.test(question)) {
     if (results.length === 0) return streamToolCall(res, "snapshot", {}, body);
     const snapshot = results[0];

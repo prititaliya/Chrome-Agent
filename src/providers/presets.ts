@@ -44,7 +44,7 @@ export function openRouterPreset(): ProviderConfig {
     baseUrl: "https://openrouter.ai/api/v1",
     apiKey: "",
     wire: "chat",
-    headers: { "HTTP-Referer": "https://github.com/comet-assistant", "X-Title": "Comet Assistant" },
+    headers: { "HTTP-Referer": "https://github.com/comet-assistant", "X-Title": "UnComet Assistant" },
     models: OPENROUTER_MODELS.map(guessModel),
     preset: "openrouter",
   };

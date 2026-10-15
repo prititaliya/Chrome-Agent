@@ -5,7 +5,15 @@ import { browser } from "wxt/browser";
 import { clickRisk, keyRisk, typeRisk, type RiskVerdict } from "../agent/risk";
 import type { CdpController } from "../browser/cdp";
 import { isScriptableUrl, sendToTab, waitForTabLoad } from "../browser/content";
-import type { ContentRequest, ContentResponse, SearchEngine, TargetInfo } from "../browser/protocol";
+import { fetchGmailInbox, waitForCode, type Inbox } from "../browser/gmail";
+import {
+  POINTER_TRAVEL_MS,
+  type ContentRequest,
+  type ContentResponse,
+  type PointerAction,
+  type SearchEngine,
+  type TargetInfo,
+} from "../browser/protocol";
 import { formatResults, webSearch } from "../browser/search";
 import { formatTabList, getActiveTab, getTab, listTabs, normalizeUrl } from "../browser/tabs";
 import type { ToolCall } from "../providers/types";
@@ -39,11 +47,36 @@ export interface ExecutorDeps {
   riskyAllowed: () => boolean;
   allowRisky: () => void;
   memory?: MemoryTools;
+  /** Defaults to the user's Gmail inbox feed. */
+  fetchInbox?: () => Promise<Inbox>;
+  profileEmail?: () => Promise<string>;
 }
+
+async function chromeProfileEmail(): Promise<string> {
+  const identity = (browser as { identity?: typeof browser.identity }).identity;
+  if (!identity?.getProfileUserInfo) return "";
+  const info = await identity.getProfileUserInfo({ accountStatus: "ANY" as never });
+  return info.email ?? "";
+}
+
+const GMAIL_SEARCH_URL = "https://mail.google.com/mail/u/0/#search/newer_than%3A1h";
 
 type Args = Record<string, unknown>;
 
-const MUTATING = new Set(["click", "type", "select_option", "press_key", "hover"]);
+const TAB_ACTIONS = new Set([
+  "snapshot",
+  "find_text",
+  "click",
+  "type",
+  "select_option",
+  "press_key",
+  "scroll",
+  "hover",
+  "wait",
+  "navigate",
+  "go_back",
+  "use_saved_password",
+]);
 
 function str(v: unknown): string {
   return typeof v === "string" ? v : v === undefined || v === null ? "" : String(v);
@@ -58,6 +91,18 @@ function host(url: string): string {
   } catch {
     return url;
   }
+}
+function webHost(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return /^https?:$/.test(parsed.protocol) ? parsed.host.replace(/^www\./, "") : "";
+  } catch {
+    return "";
+  }
+}
+export function sameSite(a: string, b: string): boolean {
+  const site = webHost(a);
+  return site !== "" && site === webHost(b);
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -116,6 +161,12 @@ export function describeCall(name: string, args: Args): string {
       return `Reading ${host(str(args["url"]))}`;
     case "web_search":
       return `Searching: ${str(args["query"])}`;
+    case "get_my_email":
+      return "Looking up your email address";
+    case "use_saved_password":
+      return `Filling saved login${r}`;
+    case "get_email_code":
+      return args["from"] ? `Checking Gmail for a code from ${str(args["from"])}` : "Checking Gmail for a code";
     case "remember":
       return `Remembering: ${str(args["text"]).slice(0, 80)}`;
     case "forget":
@@ -130,6 +181,7 @@ export function describeCall(name: string, args: Args): string {
 export class ToolExecutor {
   workingTabId: number | null;
   private readonly glowing = new Set<number>();
+  private statusLabel = "Working";
 
   constructor(
     private readonly deps: ExecutorDeps,
@@ -160,6 +212,25 @@ export class ToolExecutor {
     return tab ? `Tab ${tabId} now shows: "${tab.title}" — ${tab.url}` : `Tab ${tabId} was closed.`;
   }
 
+  private async navigateTab(tabId: number, url: string): Promise<string> {
+    await browser.tabs.update(tabId, { url });
+    await waitForTabLoad(tabId, 20_000);
+    this.workingTabId = tabId;
+    await this.glow(tabId, true);
+    return this.pageState(tabId);
+  }
+
+  /** After a click: if the page opened a new tab in front, keep working in it. */
+  private async followNewTab(tabsBefore: Set<number>): Promise<string> {
+    const opened = (await listTabs()).filter((t) => !tabsBefore.has(t.id));
+    const front = opened.length === 1 && opened[0]!.active ? opened[0]! : null;
+    if (!front) return opened.length > 0 ? ` New background tab(s) opened: ${opened.map((t) => t.id).join(", ")}.` : "";
+    await waitForTabLoad(front.id, 15_000);
+    this.workingTabId = front.id;
+    await this.glow(front.id);
+    return ` The click opened a new tab; now working in it. ${await this.pageState(front.id)}. Call snapshot before the next action.`;
+  }
+
   /** Let the page react; follow navigations to completion. */
   private async settle(tabId: number, urlBefore: string): Promise<string> {
     await sleep(500);
@@ -167,6 +238,7 @@ export class ToolExecutor {
     if (tab && (tab.url !== urlBefore || (await browser.tabs.get(tabId)).status === "loading")) {
       await waitForTabLoad(tabId, 10_000);
       await sleep(300);
+      if (this.glowing.has(tabId)) await this.glow(tabId, true);
     }
     const after = await getTab(tabId);
     const navigated = after && after.url !== urlBefore ? " The page navigated; refs are stale, call snapshot before the next action." : "";
@@ -190,12 +262,18 @@ export class ToolExecutor {
     }
   }
 
-  private async target(tabId: number, ref: number): Promise<TargetInfo> {
+  private async target(tabId: number, ref: number, action: PointerAction): Promise<TargetInfo> {
     const response = await this.content(tabId, { type: "cs/target", ref });
     if (!response.ok) throw new Error(response.error);
     if (response.kind !== "target") throw new Error("Unexpected response from page.");
-    void this.content(tabId, { type: "cs/highlight", ref });
+    await this.pointAt(tabId, ref, action);
     return response.target;
+  }
+
+  /** Glide the on-page cursor to the element and wait until it arrives, so the action lands under it. */
+  private async pointAt(tabId: number, ref: number, action: PointerAction): Promise<void> {
+    await this.content(tabId, { type: "cs/highlight", ref, action }).catch(() => undefined);
+    await sleep(POINTER_TRAVEL_MS);
   }
 
   private async gate(tool: string, label: string, verdict: RiskVerdict): Promise<string | null> {
@@ -208,10 +286,17 @@ export class ToolExecutor {
     return null;
   }
 
-  private async glow(tabId: number): Promise<void> {
-    if (this.glowing.has(tabId)) return;
+  /** `force` re-applies the overlay after a navigation replaced the document. */
+  private async glow(tabId: number, force = false): Promise<void> {
+    if (this.glowing.has(tabId) && !force) return;
     this.glowing.add(tabId);
-    await this.content(tabId, { type: "cs/agentActive", on: true }).catch(() => undefined);
+    await this.content(tabId, { type: "cs/agentActive", on: true, label: this.statusLabel }).catch(() => undefined);
+  }
+
+  /** Update the status pill on the page the agent is working in. */
+  private async status(tabId: number, label: string): Promise<void> {
+    this.statusLabel = label;
+    await this.glow(tabId, true);
   }
 
   async finish(): Promise<void> {
@@ -229,11 +314,22 @@ export class ToolExecutor {
       return await this.run(call.name, args, onLabel);
     } catch (error) {
       return { ok: false, text: `Error: ${error instanceof Error ? error.message : String(error)}` };
+    } finally {
+      const tabId = this.workingTabId;
+      if (TAB_ACTIONS.has(call.name) && tabId !== null && this.glowing.has(tabId)) await this.status(tabId, "Thinking");
     }
   }
 
   private async run(name: string, args: Args, onLabel: (label: string) => void): Promise<ToolOutcome> {
-    if (MUTATING.has(name)) await this.glow(await this.tabFor(args));
+    if (TAB_ACTIONS.has(name)) {
+      const tabId = await this.tabFor(args);
+      await this.status(tabId, describeCall(name, args));
+      const notify = onLabel;
+      onLabel = (label) => {
+        notify(label);
+        void this.status(tabId, label);
+      };
+    }
     switch (name) {
       case "get_page_text":
       case "read_tab": {
@@ -278,18 +374,21 @@ export class ToolExecutor {
         if (ref === undefined) throw new Error("ref is required.");
         const before = (await getTab(tabId))?.url ?? "";
         const cdp = await this.useCdp(tabId);
-        const t = await this.target(tabId, ref);
+        const t = await this.target(tabId, ref, "hover");
         const label = `Clicking "${t.facts.name.slice(0, 50) || t.facts.tag}"`;
         onLabel(label);
         const denied = await this.gate(name, label, clickRisk(t.facts));
         if (denied) return { ok: false, text: denied };
+        void this.content(tabId, { type: "cs/highlight", ref, action: "click" });
         const double = args["double"] === true;
+        const tabsBefore = new Set((await listTabs()).map((tab) => tab.id));
         if (cdp) await this.deps.cdp.click(tabId, t.x, t.y, double ? 2 : 1);
         else {
           const r = await this.content(tabId, { type: "cs/domClick", ref });
           if (!r.ok) throw new Error(r.error);
         }
-        return { ok: true, text: `Clicked [${ref}] ${t.facts.role} "${t.facts.name}". ${await this.settle(tabId, before)}` };
+        const settled = await this.settle(tabId, before);
+        return { ok: true, text: `Clicked [${ref}] ${t.facts.role} "${t.facts.name}". ${settled}${await this.followNewTab(tabsBefore)}` };
       }
       case "type": {
         const tabId = await this.tabFor(args);
@@ -300,7 +399,7 @@ export class ToolExecutor {
         const clear = args["clear"] !== false;
         const before = (await getTab(tabId))?.url ?? "";
         const cdp = await this.useCdp(tabId);
-        const t = await this.target(tabId, ref);
+        const t = await this.target(tabId, ref, "type");
         const label = `Typing "${text.slice(0, 40)}" into "${t.facts.name.slice(0, 40) || t.facts.tag}"`;
         onLabel(label);
         const denied = await this.gate(name, label, typeRisk(t.facts, submit));
@@ -324,7 +423,7 @@ export class ToolExecutor {
         const tabId = await this.tabFor(args);
         const ref = int(args["ref"]);
         if (ref === undefined) throw new Error("ref is required.");
-        void this.content(tabId, { type: "cs/highlight", ref });
+        await this.pointAt(tabId, ref, "select");
         const r = await this.content(tabId, { type: "cs/domSelect", ref, value: str(args["value"]) });
         if (!r.ok) throw new Error(r.error);
         return { ok: true, text: r.kind === "done" ? `[${ref}] ${r.note}.` : "Selected." };
@@ -360,7 +459,7 @@ export class ToolExecutor {
         const ref = int(args["ref"]);
         if (ref === undefined) throw new Error("ref is required.");
         const cdp = await this.useCdp(tabId);
-        const t = await this.target(tabId, ref);
+        const t = await this.target(tabId, ref, "hover");
         onLabel(`Hovering "${t.facts.name.slice(0, 50) || t.facts.tag}"`);
         if (cdp) await this.deps.cdp.hover(tabId, t.x, t.y);
         else await this.content(tabId, { type: "cs/domHover", ref });
@@ -380,16 +479,14 @@ export class ToolExecutor {
       }
       case "navigate": {
         const tabId = await this.tabFor(args);
-        const url = normalizeUrl(str(args["url"]));
-        await browser.tabs.update(tabId, { url });
-        await waitForTabLoad(tabId, 20_000);
-        this.workingTabId = tabId;
-        return { ok: true, text: `${await this.pageState(tabId)}. Call snapshot or get_page_text to see it.` };
+        const state = await this.navigateTab(tabId, normalizeUrl(str(args["url"])));
+        return { ok: true, text: `${state}. Call snapshot or get_page_text to see it.` };
       }
       case "go_back": {
         const tabId = await this.tabFor(args);
         await browser.tabs.goBack(tabId);
         await waitForTabLoad(tabId, 15_000);
+        await this.glow(tabId, true);
         return { ok: true, text: `${await this.pageState(tabId)}.` };
       }
       case "list_tabs":
@@ -397,6 +494,11 @@ export class ToolExecutor {
       case "open_tab": {
         const url = normalizeUrl(str(args["url"]));
         const active = args["active"] !== false;
+        const working = active && this.workingTabId !== null ? await getTab(this.workingTabId) : null;
+        if (working && sameSite(working.url, url)) {
+          const state = await this.navigateTab(working.id, url);
+          return { ok: true, text: `Opened in the working tab instead of a new tab: ${state}. Call snapshot to see it.` };
+        }
         const tab = await browser.tabs.create({ url, active });
         if (tab.id === undefined) throw new Error("Could not open a tab.");
         await waitForTabLoad(tab.id, 20_000);
@@ -440,6 +542,39 @@ export class ToolExecutor {
         const { engine, results } = await webSearch(this.deps.searchEngine, query);
         return { ok: true, text: formatResults(query, engine, results) };
       }
+      case "get_my_email": {
+        const [profile, gmail] = await Promise.all([
+          (this.deps.profileEmail ?? chromeProfileEmail)().catch(() => ""),
+          (this.deps.fetchInbox ?? fetchGmailInbox)().then((inbox) => inbox.account, () => ""),
+        ]);
+        const found = [profile && `Chrome profile: ${profile}`, gmail && gmail !== profile && `Signed in to Gmail as: ${gmail}`].filter(Boolean);
+        if (found.length === 0) return { ok: false, text: "No email address found (Chrome profile not signed in and no Gmail session). Ask the user." };
+        return { ok: true, text: `${found.join("\n")}\nUse the one that fits the site; prefer an address the user or memory names for it.` };
+      }
+      case "use_saved_password":
+        return this.useSavedPassword(args, onLabel);
+      case "get_email_code": {
+        const from = str(args["from"]).trim() || undefined;
+        const waitSeconds = Math.min(Math.max(int(args["wait_seconds"]) ?? 30, 0), 90);
+        const maxAge = Math.min(Math.max(int(args["max_age_minutes"]) ?? 10, 1), 60);
+        const { found, account } = await waitForCode({
+          from,
+          since: Date.now() - maxAge * 60_000,
+          waitMs: waitSeconds * 1000,
+          fetchInbox: this.deps.fetchInbox,
+        });
+        if (!found) {
+          return {
+            ok: false,
+            text:
+              `No verification code${from ? ` from ${from}` : ""} among unread Gmail messages${account ? ` for ${account}` : ""} from the last ${maxAge} min. ` +
+              `It may be in another folder, already read, or still on its way: open_tab ${GMAIL_SEARCH_URL}, open the newest matching email, read the code, then close that tab and switch_tab back to the working tab. If the code was sent by SMS or an authenticator app, ask the user for it.`,
+          };
+        }
+        const age = Math.max(0, Math.round((Date.now() - found.item.received) / 60_000));
+        const sender = found.item.from || found.item.fromEmail;
+        return { ok: true, text: `Code ${found.code} from ${sender} ("${found.item.subject.slice(0, 100)}"), received ${age} min ago.` };
+      }
       case "remember":
       case "forget":
       case "recall": {
@@ -452,6 +587,54 @@ export class ToolExecutor {
       default:
         return { ok: false, text: `Unknown tool "${name}".` };
     }
+  }
+
+  private async loginState(tabId: number, ref: number) {
+    const r = await this.content(tabId, { type: "cs/loginState", ref });
+    if (!r.ok) throw new Error(r.error);
+    if (r.kind !== "login") throw new Error("Unexpected response.");
+    return r;
+  }
+
+  /**
+   * Chrome's password manager is not readable by extensions, so pick its saved
+   * login the way a person would: a trusted click on the field, then ArrowDown
+   * and Tab to accept the first suggestion (Tab accepts it without submitting).
+   * The password stays inside Chrome and the page; only "filled or not" comes back.
+   */
+  private async useSavedPassword(args: Args, onLabel: (label: string) => void): Promise<ToolOutcome> {
+    const tabId = await this.tabFor(args);
+    const ref = int(args["ref"]);
+    if (ref === undefined) throw new Error("ref is required.");
+    if (!(await this.useCdp(tabId))) {
+      return { ok: false, text: "Filling saved passwords needs trusted input (Control mode: CDP in Settings). Ask the user to sign in." };
+    }
+    const t = await this.target(tabId, ref, "click");
+    onLabel(`Filling saved login into "${t.facts.name.slice(0, 40) || t.facts.tag}"`);
+    await this.deps.cdp.send(tabId, "Emulation.setFocusEmulationEnabled", { enabled: true }).catch(() => undefined);
+    await this.deps.cdp.click(tabId, t.x, t.y);
+    await sleep(700);
+    let state = await this.loginState(tabId, ref);
+    if (!state.passwordFilled) {
+      await this.deps.cdp.press(tabId, "ArrowDown");
+      await sleep(300);
+      await this.deps.cdp.press(tabId, "Tab");
+      await sleep(700);
+      state = await this.loginState(tabId, ref);
+    }
+    const who = state.username ? ` for "${state.username}"` : "";
+    if (state.passwordFilled) {
+      return { ok: true, text: `Chrome filled the saved login${who}. Click the sign-in button next (call snapshot if refs may have changed).` };
+    }
+    if (!state.hasPassword && state.username) {
+      return { ok: true, text: `Chrome filled the saved username "${state.username}". Continue; call use_saved_password again on the password page.` };
+    }
+    return {
+      ok: false,
+      text:
+        "Chrome did not fill a saved password: none is saved for this site, Chrome wants the device password or Touch ID first, or its suggestion list did not open. " +
+        "Do not guess a password. Ask the user to sign in (or to give you the password), then continue.",
+    };
   }
 
   private async screenshot(tabId: number): Promise<string> {

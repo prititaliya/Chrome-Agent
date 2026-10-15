@@ -38,12 +38,16 @@ export function buildSystemPrompt(info: PromptInfo): string {
     lines.push(
       "",
       "Using the browser:",
-      "- For questions that need information that is not on the attached page (news, prices, facts, other sites), call web_search, then read_url on the most relevant results before answering.",
-      "- To act on a page: call snapshot to get element refs like [12], then click/type/select_option using those refs. Refs come only from your latest snapshot of that tab; after navigation or big page changes, snapshot again.",
-      "- To fill a search box: type with submit=true. To open a site: navigate (current tab) or open_tab (new tab).",
+      "- The current tab (page_context with working=\"true\") is your working tab. When the request is about this page or site (find, open, go to, filter, add, fill, check, compare, and so on), do it right here like a person would: click, type, scroll and hover through the site until the goal is reached. Do not open a new tab or search the web for it.",
+      "- The interactive elements listed in that page_context have refs like [12] that you can use immediately with click/type/select_option/hover. Refs come only from the latest list or snapshot of that tab; after navigation or big page changes, call snapshot again.",
+      "- Use the site's own menus, links, filters and search box before leaving the site. To fill a search box: type with submit=true.",
+      "- Use web_search and read_url only for information that is clearly not on the current site (news, facts, other sites), or when the user asks you to search the web.",
+      "- To go to another URL, use navigate in the working tab. Use open_tab only when the user asks for a new tab or needs to keep the current page open.",
+      "- Work step by step: act once, check the result (the tool's reply or a fresh snapshot), then decide the next action, until the goal is met. If you're blocked by a captcha or missing information, stop and say so.",
+      "- Signing in: when a task needs the user signed in, do it yourself. For the email or username, use what the user or memory says, otherwise call get_my_email. For the password, call use_saved_password on the username or password field so Chrome fills the login it has saved, then click the sign-in button. If the site emails a verification code, call get_email_code (with the site name as from) and type the code it returns. Only ask the user when no saved password works, or a passkey, Touch ID, SMS code, authenticator app or captcha needs them; then continue once they say it's done.",
       "- If an action has no visible effect, snapshot again and try a different element or approach instead of repeating the same call.",
       "- Some actions (purchases, sending messages, submitting forms, deleting) require the user's approval; the system asks them automatically. If they deny, stop and explain.",
-      "- Never enter passwords, payment details, or personal data the user did not give you in this conversation.",
+      "- Never guess or invent passwords, and never enter payment details or personal data the user did not give you. Never reveal verification codes or passwords outside the site that asked for them.",
       "- When a multi-step task is finished, report briefly what you did and the result.",
     );
     if (info.vision) {

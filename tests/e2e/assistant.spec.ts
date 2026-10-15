@@ -40,7 +40,7 @@ test("shows model, tokens and cost per answer, per chat, and in the usage dashbo
 
   const foot = panel.locator(".msg-assistant .msg-foot").last();
   await expect(foot.locator(".model-tag")).toHaveText("mock-1");
-  await expect(foot).toContainText(/\d+ tokens/);
+  await expect(foot).toContainText(/[\d.]+k? tokens/);
   await expect(foot).toContainText("$");
   await foot.getByRole("button", { name: /tokens/ }).click();
   const breakdown = panel.locator(".msg-assistant .breakdown");
@@ -79,6 +79,15 @@ test("acts on the page and asks before a risky submit", async ({ openPanel, site
   await approval.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(site).toHaveURL(/shop\.html\?name=Ada/);
   await expect(panel.getByText(/^Finished\./)).toBeVisible();
+});
+
+test("acts on the current tab using the element refs attached to the question", async ({ openPanel, site }) => {
+  const panel = await openPanel([MOCK], { model: MODEL });
+  await ask(panel, "Type my name here");
+
+  await expect(panel.getByText(/^Done in place\./)).toBeVisible();
+  await expect(site.locator('input[name="name"]')).toHaveValue("Grace");
+  await expect(site).toHaveURL(/form\.html$/);
 });
 
 test("denying a risky action leaves the page untouched", async ({ openPanel, site }) => {

@@ -118,7 +118,7 @@ export function useChat(modelRef: ModelRef | null) {
       // Gather page context: current tab (unless turned off) plus @-attached tabs.
       const pages: PageContext[] = [];
       if (settings.attachPage && options.includeCurrentTab && activeTab) {
-        const ctx = await readTabContext(activeTab.id, "current tab");
+        const ctx = await readTabContext(activeTab.id, "current tab", { withSnapshot: model.tools });
         if (ctx) pages.push(ctx);
       }
       for (const tabId of options.attachedTabIds) {

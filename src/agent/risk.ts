@@ -13,12 +13,20 @@ const SAFE: RiskVerdict = { risky: false, reason: "" };
 const RISKY_LABEL =
   /\b(buy|purchase|pay|checkout|check out|place (your )?order|order now|complete (order|purchase)|confirm|send|post|publish|tweet|reply|comment|delete|trash|discard|unsubscribe|subscribe|transfer|withdraw|donate|book now|reserve|sign up|register|create account|apply|deactivate|close account|cancel (my |your )?(subscription|order|plan|membership)|submit)\b/i;
 
+const SIGN_UP_LABEL = /\b(sign up|register|create account|join|buy|purchase|pay|delete|transfer|withdraw)\b/i;
+
 function label(facts: TargetFacts): string {
   return facts.name.trim() === "" ? facts.tag : `"${facts.name.trim().slice(0, 60)}"`;
 }
 
+/** Signing in and entering verification codes run without approval; sign-ups and payments don't. */
+function isSignIn(facts: TargetFacts): boolean {
+  return facts.formIsLogin && !facts.formHasPayment && !SIGN_UP_LABEL.test(facts.name);
+}
+
 /** Clicking a button that submits a non-search form, or whose label signals a commitment. */
 export function clickRisk(facts: TargetFacts): RiskVerdict {
+  if (isSignIn(facts)) return SAFE;
   if (RISKY_LABEL.test(facts.name)) {
     return { risky: true, reason: `Clicking ${label(facts)} may buy, send, post, delete, or submit something.` };
   }
@@ -35,7 +43,7 @@ export function typeRisk(facts: TargetFacts, submit: boolean): RiskVerdict {
   if (facts.formHasPayment && /card|cvc|cvv|expir|iban|account number/i.test(hint)) {
     return { risky: true, reason: `Entering payment details into ${label(facts)}.` };
   }
-  if (submit && facts.inForm && !facts.formIsSearch) {
+  if (submit && facts.inForm && !facts.formIsSearch && !isSignIn(facts)) {
     return { risky: true, reason: `Typing into ${label(facts)} and pressing Enter submits a form.` };
   }
   return SAFE;
@@ -45,7 +53,7 @@ export function typeRisk(facts: TargetFacts, submit: boolean): RiskVerdict {
 export function keyRisk(key: string, focused: TargetFacts | null): RiskVerdict {
   if (!focused || !/(^|\+)enter$/i.test(key.trim())) return SAFE;
   if (focused.isSubmit && !focused.formIsSearch) return clickRisk(focused);
-  if (focused.inForm && !focused.formIsSearch && focused.tag !== "textarea") {
+  if (focused.inForm && !focused.formIsSearch && focused.tag !== "textarea" && !isSignIn(focused)) {
     return { risky: true, reason: `Pressing Enter in ${label(focused)} submits a form.` };
   }
   return SAFE;

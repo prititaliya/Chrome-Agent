@@ -40,6 +40,49 @@ describe("snapshot", () => {
   });
 });
 
+describe("agent overlay", () => {
+  it("shows the frame, status pill and cursor while the agent is in control", async () => {
+    const doc = dom(`<button>Go</button>`);
+    buildSnapshot(doc);
+    await handleRequest(doc, { type: "cs/agentActive", on: true, label: 'Clicking "Go"' });
+    const root = doc.querySelector("comet-agent-overlay")!.shadowRoot!;
+    const stage = root.querySelector(".stage")!;
+    expect(stage.classList.contains("on")).toBe(true);
+    expect(root.querySelector(".text")!.textContent).toBe('Clicking "Go"');
+
+    await handleRequest(doc, { type: "cs/highlight", ref: 1, action: "click" });
+    expect(root.querySelector(".cursor")!.classList.contains("shown")).toBe(true);
+    expect(root.querySelector(".focus")!.classList.contains("show")).toBe(true);
+    await new Promise((r) => setTimeout(r, 500));
+    expect(root.querySelectorAll(".ripple").length).toBe(2);
+
+    await handleRequest(doc, { type: "cs/agentActive", on: false });
+    expect(stage.classList.contains("on")).toBe(false);
+    expect(doc.querySelectorAll("comet-agent-overlay").length).toBe(1);
+  });
+});
+
+describe("sign-in forms", () => {
+  it("tells sign-in forms apart from sign-ups and reports fill state without the password", async () => {
+    const doc = dom(`
+      <form id="login"><input type="email" name="email" value="a@b.c"><input type="password" name="pw"><button>Sign in</button></form>
+      <form id="signup"><input name="email"><input type="password" autocomplete="new-password"><button>Create</button></form>
+      <form id="otp"><input name="code" autocomplete="one-time-code"><button>Verify</button></form>
+    `);
+    expect(targetFacts(doc.querySelector("#login button")!).formIsLogin).toBe(true);
+    expect(targetFacts(doc.querySelector("#signup button")!).formIsLogin).toBe(false);
+    expect(targetFacts(doc.querySelector("#otp button")!).formIsLogin).toBe(true);
+
+    buildSnapshot(doc);
+    const empty = await handleRequest(doc, { type: "cs/loginState", ref: 1 });
+    expect(empty).toEqual({ ok: true, kind: "login", username: "a@b.c", passwordFilled: false, hasPassword: true });
+    (doc.querySelector('[name="pw"]') as HTMLInputElement).value = "secret";
+    const filled = await handleRequest(doc, { type: "cs/loginState", ref: 1 });
+    expect(filled).toMatchObject({ passwordFilled: true });
+    expect(JSON.stringify(filled)).not.toContain("secret");
+  });
+});
+
 describe("content requests", () => {
   it("types into fields and reports stale refs", async () => {
     const doc = dom(`<input name="email">`);

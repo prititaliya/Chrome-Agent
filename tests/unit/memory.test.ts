@@ -148,6 +148,17 @@ describe("prompt and tools", () => {
     expect(plain).not.toContain("remember");
   });
 
+  it("tells the model to act in the working tab before searching the web", () => {
+    const prompt = buildSystemPrompt({ now: new Date(), canAct: true, vision: false });
+    const working = prompt.indexOf("is your working tab");
+    expect(working).toBeGreaterThan(-1);
+    expect(working).toBeLessThan(prompt.indexOf("Use web_search"));
+    expect(prompt).toContain("Use open_tab only when");
+    expect(prompt).toContain("call use_saved_password");
+    expect(prompt).toContain("call get_email_code");
+    expect(buildSystemPrompt({ now: new Date(), canAct: false, vision: false })).not.toContain("working tab");
+  });
+
   it("offers memory tools only when enabled and routes them to the memory deps", async () => {
     expect(toolsFor({ vision: false, screenshots: false }).some((t) => t.name === "remember")).toBe(false);
     expect(toolsFor({ vision: false, screenshots: false, memory: true }).map((t) => t.name)).toEqual(expect.arrayContaining(["remember", "forget", "recall"]));

@@ -13,10 +13,14 @@ export interface PageContext {
   text?: string;
   truncated?: boolean;
   selection?: string;
+  /** Interactive elements with refs, for the tab the agent works in. */
+  snapshot?: string;
   note?: string;
 }
 
 const CURRENT_TAB_CHARS = 14_000;
+const CURRENT_TAB_CHARS_WITH_SNAPSHOT = 8_000;
+const CONTEXT_SNAPSHOT_CHARS = 6_000;
 const ATTACHED_TAB_CHARS = 7_000;
 const TOOL_RESULT_KEEP = 1_500;
 const HISTORY_CHAR_BUDGET = 120_000;
@@ -28,11 +32,13 @@ function attr(value: string): string {
 export function formatPageContext(pages: PageContext[]): string {
   return pages
     .map((p) => {
-      const head = `<page_context source="${p.source}" tab_id="${p.tabId}" title="${attr(p.title)}" url="${attr(p.url)}">`;
+      const working = p.source === "current tab" ? ' working="true"' : "";
+      const head = `<page_context source="${p.source}" tab_id="${p.tabId}" title="${attr(p.title)}" url="${attr(p.url)}"${working}>`;
       const body: string[] = [];
       if (p.note) body.push(p.note);
       if (p.selection) body.push(`User's selected text on this page:\n"""${p.selection}"""`);
       if (p.text !== undefined) body.push(p.text + (p.truncated ? "\n…[page truncated; use get_page_text or scroll for more]" : ""));
+      if (p.snapshot) body.push(`Interactive elements (refs valid until the page changes):\n${p.snapshot}`);
       return `${head}\n${body.join("\n\n")}\n</page_context>`;
     })
     .join("\n\n");
@@ -43,17 +49,24 @@ export function buildUserContent(question: string, pages: PageContext[]): string
   return `${formatPageContext(pages)}\n\n${question}`;
 }
 
-export async function readTabContext(tabId: number, source: PageContext["source"]): Promise<PageContext | null> {
+export async function readTabContext(
+  tabId: number,
+  source: PageContext["source"],
+  options: { withSnapshot?: boolean } = {},
+): Promise<PageContext | null> {
   const tab = await getTab(tabId);
   if (!tab) return null;
   const base: PageContext = { source, tabId, title: tab.title, url: tab.url };
   if (!isScriptableUrl(tab.url)) {
     return { ...base, note: "(This is a browser page whose content cannot be read.)" };
   }
-  const maxChars = source === "current tab" ? CURRENT_TAB_CHARS : ATTACHED_TAB_CHARS;
-  const [page, selection] = await Promise.all([
+  const current = source === "current tab";
+  const withSnapshot = current && options.withSnapshot === true;
+  const maxChars = !current ? ATTACHED_TAB_CHARS : withSnapshot ? CURRENT_TAB_CHARS_WITH_SNAPSHOT : CURRENT_TAB_CHARS;
+  const [page, selection, snap] = await Promise.all([
     sendToTab(tabId, { type: "cs/pageText", maxChars }),
-    source === "current tab" ? sendToTab(tabId, { type: "cs/selection" }) : Promise.resolve(null),
+    current ? sendToTab(tabId, { type: "cs/selection" }) : Promise.resolve(null),
+    withSnapshot ? sendToTab(tabId, { type: "cs/snapshot", maxChars: CONTEXT_SNAPSHOT_CHARS }) : Promise.resolve(null),
   ]);
   if (!page.ok || page.kind !== "pageText") {
     return { ...base, note: `(Page content unavailable: ${page.ok ? "unexpected response" : page.error})` };
@@ -66,6 +79,7 @@ export async function readTabContext(tabId: number, source: PageContext["source"
     text: page.text,
     truncated: page.truncated,
     selection: selected || undefined,
+    snapshot: snap && snap.ok && snap.kind === "snapshot" && snap.text ? snap.text : undefined,
   };
 }
 

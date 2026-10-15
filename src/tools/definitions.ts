@@ -15,7 +15,8 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "snapshot",
-    description: "List the visible interactive elements of a tab with ref numbers ([12] button \"Sign in\"), plus headings. Call before clicking or typing.",
+    description:
+      "List the visible interactive elements of a tab with ref numbers ([12] button \"Sign in\"), plus headings. The working tab's elements are already in page_context at the start of a turn; call this after the page changes or for other tabs.",
     parameters: schema({ tab_id: tabId }),
   },
   {
@@ -105,7 +106,8 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "open_tab",
-    description: "Open a URL in a new tab. With active=true (default) it becomes the tab you work in.",
+    description:
+      "Open a URL in a new tab, only when the user wants a new tab or the current page must stay open. Otherwise use navigate or click links in the working tab. With active=true (default) it becomes the tab you work in.",
     parameters: schema({ url: { type: "string" }, active: { type: "boolean" } }, ["url"]),
   },
   {
@@ -130,8 +132,30 @@ export const TOOLS: ToolSchema[] = [
   },
   {
     name: "web_search",
-    description: "Search the web and return the top results (title, URL, snippet).",
+    description:
+      "Search the web and return the top results (title, URL, snippet). Only for information not available on the current site; use the site's own search box for things on it.",
     parameters: schema({ query: { type: "string" } }, ["query"]),
+  },
+  {
+    name: "get_my_email",
+    description: "Get the user's email address (their Chrome profile and the Gmail account signed in to this browser), e.g. to fill a sign-in form.",
+    parameters: schema({}),
+  },
+  {
+    name: "use_saved_password",
+    description:
+      "Sign in with the login Chrome has saved for this site: clicks the username or password field (by ref) and picks Chrome's saved-login suggestion. The password is filled by Chrome and never shown to you. Reports whether it worked.",
+    parameters: schema({ ref: { ...ref, description: "Ref of the username/email or password field." }, tab_id: tabId }, ["ref"]),
+  },
+  {
+    name: "get_email_code",
+    description:
+      "Find a verification / one-time code that a site just emailed to the user, by checking their unread Gmail. Waits for the email to arrive. Returns only the code, sender and subject.",
+    parameters: schema({
+      from: { type: "string", description: "Site or sender name to match, e.g. \"github\" or \"amazon.in\"." },
+      wait_seconds: { type: "integer", description: "How long to wait for the email to arrive. Default 30, max 90." },
+      max_age_minutes: { type: "integer", description: "Ignore emails older than this. Default 10." },
+    }),
   },
 ];
 

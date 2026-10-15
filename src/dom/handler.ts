@@ -5,10 +5,36 @@ import type { ContentRequest, ContentResponse, SearchEngine, SearchResult, Targe
 import { clickElement, pressKeyOn, scrollByAmount, typeInto, waitForContent } from "./actions";
 import { accessibleName } from "./axname";
 import { extractFromRoot } from "./extract";
+import { pointAt, setAgentActive } from "./overlay";
 import { readPageText } from "./readability";
 import { buildSnapshot, findByRef } from "./snapshot";
 
 const PAYMENT_HINT = /card|cc-|cvc|cvv|expir|iban|billing|payment/i;
+const LOGIN_HINT = /one-time-code|otp|passcode|verification|2fa|mfa|totp|current-password|username/i;
+const USERNAME_HINT = /user|email|login|account|identifier|phone/i;
+
+function isLoginForm(fields: Element[], fieldHint: (field: Element) => string): boolean {
+  const passwords = fields.filter((f) => f.getAttribute("type") === "password");
+  const signUp = passwords.length > 1 || fields.some((f) => /new-password/i.test(f.getAttribute("autocomplete") ?? ""));
+  return !signUp && (passwords.length === 1 || fields.some((f) => LOGIN_HINT.test(fieldHint(f))));
+}
+
+function loginState(doc: Document, anchor: Element): ContentResponse {
+  const scope = anchor.closest("form") ?? doc;
+  const inputs = [...scope.querySelectorAll<HTMLInputElement>("input")].filter((i) => !i.disabled && i.type !== "hidden");
+  const password = inputs.find((i) => i.type === "password");
+  const username =
+    inputs.find((i) => /username|email/i.test(i.autocomplete)) ??
+    inputs.find((i) => i.type === "email") ??
+    inputs.find((i) => i.type === "text" && USERNAME_HINT.test(`${i.name} ${i.id}`));
+  return {
+    ok: true,
+    kind: "login",
+    username: (username?.value ?? "").slice(0, 100),
+    passwordFilled: (password?.value ?? "") !== "",
+    hasPassword: password !== undefined,
+  };
+}
 
 function visibleText(doc: Document): string {
   const body = doc.body;
@@ -61,6 +87,7 @@ export function targetFacts(element: Element): TargetFacts {
     inForm: form !== null,
     formHasPassword: fields.some((f) => f.getAttribute("type") === "password"),
     formHasPayment: fields.some((f) => PAYMENT_HINT.test(fieldHint(f))),
+    formIsLogin: form !== null && isLoginForm(fields, fieldHint),
     formIsSearch: form !== null && isSearchForm(form, fields),
     formAction: form?.getAttribute("action") ?? "",
   };
@@ -140,45 +167,6 @@ export function searchResults(doc: Document, engine: SearchEngine): SearchResult
     }
   }
   return results.slice(0, 8);
-}
-
-let highlightHost: HTMLElement | null = null;
-let highlightBox: HTMLElement | null = null;
-let glow: HTMLElement | null = null;
-
-function overlayRoot(doc: Document): ShadowRoot {
-  if (!highlightHost || !highlightHost.isConnected) {
-    highlightHost = doc.createElement("comet-agent-overlay");
-    highlightHost.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
-    const root = highlightHost.attachShadow({ mode: "open" });
-    highlightBox = doc.createElement("div");
-    highlightBox.style.cssText =
-      "position:fixed;border:2px solid #7c5cff;border-radius:6px;background:rgba(124,92,255,.12);" +
-      "box-shadow:0 0 0 4px rgba(124,92,255,.18);transition:all .15s ease;display:none;";
-    glow = doc.createElement("div");
-    glow.style.cssText =
-      "position:fixed;inset:0;box-shadow:inset 0 0 0 3px rgba(124,92,255,.75),inset 0 0 24px rgba(124,92,255,.35);display:none;";
-    root.append(glow, highlightBox);
-    doc.documentElement.append(highlightHost);
-  }
-  return highlightHost.shadowRoot!;
-}
-
-function highlight(doc: Document, element: Element): void {
-  overlayRoot(doc);
-  if (!highlightBox) return;
-  const rect = element.getBoundingClientRect();
-  Object.assign(highlightBox.style, {
-    display: "block",
-    left: `${rect.left - 3}px`,
-    top: `${rect.top - 3}px`,
-    width: `${rect.width + 6}px`,
-    height: `${rect.height + 6}px`,
-  });
-  const box = highlightBox;
-  setTimeout(() => {
-    box.style.display = "none";
-  }, 1500);
 }
 
 function staleRef(ref: number): ContentResponse {
@@ -312,15 +300,17 @@ export async function handleRequest(doc: Document, req: ContentRequest): Promise
     }
     case "cs/highlight": {
       const el = findByRef(doc, req.ref);
-      if (el) highlight(doc, el);
+      if (el) pointAt(doc, el, req.action);
       return { ok: true, kind: "done", note: "highlighted" };
     }
-    case "cs/agentActive": {
-      overlayRoot(doc);
-      if (glow) glow.style.display = req.on ? "block" : "none";
+    case "cs/agentActive":
+      setAgentActive(doc, req.on, req.label);
       return { ok: true, kind: "done", note: req.on ? "active" : "idle" };
-    }
     case "cs/searchResults":
       return { ok: true, kind: "search", results: searchResults(doc, req.engine) };
+    case "cs/loginState": {
+      const el = findByRef(doc, req.ref);
+      return el ? loginState(doc, el) : staleRef(req.ref);
+    }
   }
 }

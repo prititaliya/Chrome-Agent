@@ -13,6 +13,7 @@ function facts(patch: Partial<TargetFacts>): TargetFacts {
     inForm: false,
     formHasPassword: false,
     formHasPayment: false,
+    formIsLogin: false,
     formIsSearch: false,
     formAction: "",
     ...patch,
@@ -45,6 +46,16 @@ describe("risk classifier", () => {
 
   it("flags entering card details", () => {
     expect(typeRisk(facts({ tag: "input", name: "Card number", inForm: true, formHasPayment: true }), false).risky).toBe(true);
+  });
+
+  it("lets sign-in and verification-code forms submit without approval, but not sign-ups", () => {
+    const login = { isSubmit: true, inForm: true, formIsLogin: true, formHasPassword: true };
+    expect(clickRisk(facts({ ...login, name: "Sign in" })).risky).toBe(false);
+    expect(clickRisk(facts({ ...login, name: "Submit" })).risky).toBe(false);
+    expect(typeRisk(facts({ tag: "input", name: "Verification code", inForm: true, formIsLogin: true }), true).risky).toBe(false);
+    expect(keyRisk("Enter", facts({ tag: "input", name: "Password", inForm: true, formIsLogin: true })).risky).toBe(false);
+    expect(clickRisk(facts({ ...login, name: "Sign up" })).risky).toBe(true);
+    expect(clickRisk(facts({ ...login, name: "Pay", formHasPayment: true })).risky).toBe(true);
   });
 
   it("flags Enter inside non-search forms only", () => {

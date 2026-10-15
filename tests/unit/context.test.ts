@@ -7,10 +7,24 @@ describe("page context", () => {
     const content = buildUserContent("What is this?", [
       { source: "current tab", tabId: 3, title: 'A "quoted" <title>', url: "https://a.test/", text: "Body text", selection: "picked" },
     ]);
-    expect(content).toMatch(/^<page_context source="current tab" tab_id="3" title="A 'quoted' title" url="https:\/\/a.test\/">/);
+    expect(content).toMatch(/^<page_context source="current tab" tab_id="3" title="A 'quoted' title" url="https:\/\/a.test\/" working="true">/);
     expect(content).toContain("picked");
     expect(content).toContain("Body text");
     expect(content.endsWith("What is this?")).toBe(true);
+  });
+
+  it("marks the current tab as the working tab and lists its interactive elements", () => {
+    const content = buildUserContent("Add the blue shirt to the cart", [
+      { source: "current tab", tabId: 3, title: "Shop", url: "https://shop.test/", text: "Body", snapshot: '[1] button "Add to cart"' },
+      { source: "attached tab", tabId: 4, title: "Other", url: "https://o.test/", text: "Other body" },
+    ]);
+    expect(content).toContain('url="https://shop.test/" working="true">');
+    expect(content).toContain('Interactive elements (refs valid until the page changes):\n[1] button "Add to cart"');
+    expect(content).toContain('<page_context source="attached tab" tab_id="4" title="Other" url="https://o.test/">');
+
+    const [compacted] = compactHistory([{ role: "user", content }]);
+    expect(compacted!.content).not.toContain("Add to cart\"");
+    expect(compacted!.content).toContain('working="true">[content from an earlier turn omitted');
   });
 
   it("returns the bare question without pages", () => {

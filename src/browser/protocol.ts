@@ -4,6 +4,10 @@ export type ExtractKind = "table" | "list" | "links" | "forms" | "metadata";
 export type ScrollDirection = "up" | "down" | "top" | "bottom";
 export type SearchEngine = "google" | "duckduckgo" | "bing";
 
+/** How long the on-page cursor takes to glide to an element; actions wait for it. */
+export const POINTER_TRAVEL_MS = 450;
+export type PointerAction = "click" | "type" | "hover" | "select";
+
 export type ContentRequest =
   | { type: "cs/ping" }
   | { type: "cs/snapshot"; maxChars?: number }
@@ -22,9 +26,10 @@ export type ContentRequest =
   | { type: "cs/submitOf"; ref: number }
   | { type: "cs/scroll"; direction: ScrollDirection; ref?: number; amount?: number }
   | { type: "cs/waitText"; text: string; timeoutMs: number }
-  | { type: "cs/highlight"; ref: number }
-  | { type: "cs/agentActive"; on: boolean }
-  | { type: "cs/searchResults"; engine: SearchEngine };
+  | { type: "cs/highlight"; ref: number; action?: PointerAction }
+  | { type: "cs/agentActive"; on: boolean; label?: string }
+  | { type: "cs/searchResults"; engine: SearchEngine }
+  | { type: "cs/loginState"; ref: number };
 
 /** Facts about an element the risk classifier relies on (read from the DOM, never the model). */
 export interface TargetFacts {
@@ -37,6 +42,8 @@ export interface TargetFacts {
   inForm: boolean;
   formHasPassword: boolean;
   formHasPayment: boolean;
+  /** Sign-in or verification-code form (not a sign-up form). */
+  formIsLogin: boolean;
   /** Search boxes submit freely; other forms need approval. */
   formIsSearch: boolean;
   formAction: string;
@@ -64,4 +71,6 @@ export type ContentResponse =
   | { ok: true; kind: "target"; target: TargetInfo }
   | { ok: true; kind: "facts"; facts: TargetFacts | null }
   | { ok: true; kind: "done"; note: string }
-  | { ok: true; kind: "search"; results: SearchResult[] };
+  | { ok: true; kind: "search"; results: SearchResult[] }
+  /** Never carries the password itself. */
+  | { ok: true; kind: "login"; username: string; passwordFilled: boolean; hasPassword: boolean };
