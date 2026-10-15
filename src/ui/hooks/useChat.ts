@@ -20,6 +20,8 @@ import {
   type Step,
   type UiMessage,
 } from "../../storage/conversations";
+import { isChatModel, looksLikeDecision } from "../../providers/catalog";
+import { catalogIds, getCatalog } from "../../storage/catalogs";
 import { getDigest, saveDigest } from "../../storage/digests";
 import { deleteMemory, formatMemories, listMemories, saveMemory, searchMemories, selectMemories } from "../../storage/memory";
 import { redactSecrets } from "../../storage/redact";
@@ -238,6 +240,14 @@ export function useChat(modelRef: ModelRef | null) {
       fail(`Add your ${manual.provider.name} API key in Settings first.`);
       return;
     }
+    if (manual && !isChatModel(manual.model.id)) {
+      fail(
+        looksLikeDecision(manual.model.id)
+          ? `${manual.model.id} is a decision model: it can't chat, only classify. Pick a chat model from the menu at the top, or choose it as the Task classifier in Settings → Auto model.`
+          : `${manual.model.id} is a speech-to-text model. Pick a chat model from the menu at the top, or choose it in Settings → Voice input.`,
+      );
+      return;
+    }
 
     setRunning(true);
     steerRef.current = [];
@@ -311,6 +321,7 @@ export function useChat(modelRef: ModelRef | null) {
           earlier,
           stream: streamModel,
           signal: controller.signal,
+          decisionModels: catalogIds(await getCatalog("decisions")),
           onUsage: (usage, by) => record(usage, by.provider, by.modelId),
         });
         if (!route) throw new Error("Auto mode: no allowed model has an API key.");

@@ -1,8 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { isScriptableUrl } from "../../browser/content";
 import { listTabs, type TabInfo } from "../../browser/tabs";
+import { shortSttLabel, type SttChoice } from "../../providers/stt";
 import type { QueuedMessage } from "../hooks/useChat";
-import { AtIcon, CloseIcon, QueueIcon, SendIcon, StopIcon } from "./Icons";
+import { useVoiceInput } from "../hooks/useVoiceInput";
+import { AtIcon, CloseIcon, MicIcon, QueueIcon, SendIcon, StopIcon } from "./Icons";
+import VoiceBar from "./VoiceBar";
+
+export interface VoiceConfig {
+  choice: SttChoice | null;
+  language: string;
+  autoSend: boolean;
+}
 
 interface Props {
   running: boolean;
@@ -25,6 +34,16 @@ interface Props {
   onStop: () => void;
   draft: string;
   onDraftChange: (text: string) => void;
+  voice: VoiceConfig;
+  convId: string;
+  onNotice: (message: string) => void;
+}
+
+/** Append dictated text to whatever was already typed. */
+function withDictation(base: string, text: string): string {
+  if (text === "") return base;
+  const head = base.trimEnd();
+  return head === "" ? text : `${head} ${text}`;
 }
 
 function Favicon({ tab }: { tab: TabInfo }) {
@@ -41,6 +60,42 @@ export default function Composer(props: Props) {
   const { running, activeTab, attached, draft } = props;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [picker, setPicker] = useState<{ query: string; tabs: TabInfo[]; index: number } | null>(null);
+  const baseDraft = useRef("");
+  const latest = useRef(props);
+  latest.current = props;
+  const voice = useVoiceInput({
+    choice: props.voice.choice,
+    language: props.voice.language,
+    convId: props.convId,
+    onPartial: (text) => latest.current.onDraftChange(withDictation(baseDraft.current, text)),
+    onFinal: (text) => {
+      const p = latest.current;
+      const next = withDictation(baseDraft.current, text);
+      if (p.voice.autoSend && text !== "" && next.trim() !== "") {
+        if (p.running) p.onSteer(next);
+        else p.onSend(next);
+      } else {
+        p.onDraftChange(next);
+        inputRef.current?.focus();
+      }
+    },
+    onNotice: (message) => latest.current.onNotice(message),
+  });
+  const listening = voice.phase !== "idle";
+
+  function cancelVoice() {
+    voice.cancel();
+    props.onDraftChange(baseDraft.current);
+    inputRef.current?.focus();
+  }
+
+  function toggleVoice() {
+    if (voice.phase === "recording") return voice.stop();
+    if (listening) return;
+    baseDraft.current = draft;
+    setPicker(null);
+    void voice.start();
+  }
 
   useLayoutEffect(() => {
     const el = inputRef.current;
@@ -94,6 +149,16 @@ export default function Composer(props: Props) {
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (listening) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        cancelVoice();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        voice.stop();
+      }
+      return;
+    }
     if (picker && picker.tabs.length > 0) {
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
         e.preventDefault();
@@ -201,19 +266,45 @@ export default function Composer(props: Props) {
           <span>Add tab</span>
         </button>
       </div>
-      <div className="input-row">
+      <VoiceBar voice={{ ...voice, cancel: cancelVoice }} />
+      <div className={listening ? "input-row listening" : "input-row"}>
         <textarea
           ref={inputRef}
           rows={1}
           value={draft}
-          placeholder={running ? "Steer the agent, or queue a follow-up…" : "Ask anything, or tell me what to do…"}
+          readOnly={listening}
+          placeholder={
+            listening
+              ? voice.phase === "transcribing"
+                ? "Transcribing…"
+                : "Listening… press Enter when you're done"
+              : running
+                ? "Steer the agent, or queue a follow-up…"
+                : "Ask anything, or tell me what to do…"
+          }
           aria-label="Message"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={onKeyDown}
         />
+        <button
+          className={voice.phase === "recording" ? "mic recording" : "mic"}
+          onClick={toggleVoice}
+          disabled={voice.phase === "starting" || voice.phase === "transcribing"}
+          aria-label={voice.phase === "recording" ? "Stop dictation" : "Dictate"}
+          aria-pressed={voice.phase === "recording"}
+          title={
+            props.voice.choice
+              ? voice.phase === "recording"
+                ? "Stop and transcribe (Enter)"
+                : `Dictate with ${shortSttLabel(props.voice.choice.label)} (change in Settings → Voice input)`
+              : "Set up speech-to-text in Settings → Voice input"
+          }
+        >
+          {voice.phase === "recording" ? <span className="mic-stop" /> : <MicIcon size={16} />}
+        </button>
         {running ? (
           <>
-            {hasDraft && (
+            {hasDraft && !listening && (
               <>
                 <button className="send ghost" onClick={queueDraft} aria-label="Queue" title="Queue: run after this task (Alt+Enter)">
                   <QueueIcon size={16} />
@@ -227,7 +318,7 @@ export default function Composer(props: Props) {
               <StopIcon size={16} />
             </button>
           </>
-        ) : (
+        ) : listening ? null : (
           <button className="send" onClick={submit} disabled={draft.trim() === ""} aria-label="Send">
             <SendIcon size={16} />
           </button>

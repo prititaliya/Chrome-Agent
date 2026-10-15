@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { autoCandidates } from "../../src/agent/router";
 import type { TabInfo } from "../../src/browser/tabs";
+import { isChatModel } from "../../src/providers/catalog";
 import { onPendingPrompt, takePendingPrompt } from "../../src/storage/pending";
 import { resolveModel, saveSettings } from "../../src/storage/settings";
 import { OpenChatContext } from "../../src/ui/chatLinks";
@@ -11,6 +12,7 @@ import MemoryView from "../../src/ui/components/MemoryView";
 import ModelPicker from "../../src/ui/components/ModelPicker";
 import SettingsView from "../../src/ui/components/SettingsView";
 import UsageView from "../../src/ui/components/UsageView";
+import { useStt } from "../../src/ui/hooks/useCatalog";
 import { useChat } from "../../src/ui/hooks/useChat";
 import { useActiveTab, useProviders, useSettings } from "../../src/ui/hooks/useStores";
 
@@ -28,12 +30,24 @@ export default function App() {
   const [attached, setAttached] = useState<TabInfo[]>([]);
   const [notice, setNotice] = useState("");
   const chat = useChat(settings.model);
+  const stt = useStt(providers, settings.voice);
+  const voice = useMemo(
+    () => ({ choice: stt.choice, language: settings.voice.language, autoSend: settings.voice.autoSend }),
+    [stt.choice, settings.voice.language, settings.voice.autoSend],
+  );
 
   // Default to the first model of a provider that has a key.
   useEffect(() => {
-    if (!providers || settings.auto.enabled || resolveModel(providers, settings.model)) return;
-    const ready = providers.find((p) => p.apiKey && p.models.length > 0);
-    if (ready) void saveSettings({ model: { providerId: ready.id, modelId: ready.models[0]!.id } });
+    if (!providers || settings.auto.enabled) return;
+    const current = resolveModel(providers, settings.model);
+    if (current && isChatModel(current.model.id)) return;
+    for (const p of providers) {
+      const first = p.apiKey ? p.models.find((m) => isChatModel(m.id)) : undefined;
+      if (first) {
+        void saveSettings({ model: { providerId: p.id, modelId: first.id } });
+        return;
+      }
+    }
   }, [providers, settings.model, settings.auto.enabled]);
 
   // A new active tab is shared again by default.
@@ -188,6 +202,8 @@ export default function App() {
               onOpenUsage={() => setView("usage")}
               contextWindow={shownModel?.model.contextWindow}
               providerName={shownModel?.provider.name}
+              voice={voice}
+              onNotice={setNotice}
             />
           )}
           {view === "history" && <HistoryView currentId={chat.conv.id} onOpen={openChat} />}

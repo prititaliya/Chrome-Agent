@@ -5,7 +5,7 @@ import type { TabInfo } from "../../browser/tabs";
 import { conversationUsage, type Conversation } from "../../storage/conversations";
 import type { PendingApproval, PendingQuestion, QueuedMessage } from "../hooks/useChat";
 import ApprovalCard from "./ApprovalCard";
-import Composer from "./Composer";
+import Composer, { type VoiceConfig } from "./Composer";
 import Markdown from "../markdown";
 import MessageView from "./MessageView";
 import QuestionCard from "./QuestionCard";
@@ -47,6 +47,8 @@ interface Props {
   /** Context window of the selected model, when known. */
   contextWindow?: number;
   providerName?: string;
+  voice: VoiceConfig;
+  onNotice: (message: string) => void;
 }
 
 function ChatStats({ conv, contextWindow, providerName, onOpenUsage }: Pick<Props, "conv" | "contextWindow" | "providerName" | "onOpenUsage">) {
@@ -181,6 +183,9 @@ export default function ChatView(props: Props) {
         onRemoveQueued={props.onRemoveQueued}
         onSendQueuedNow={props.onSendQueuedNow}
         onRunQueue={props.onRunQueue}
+        voice={props.voice}
+        convId={conv.id}
+        onNotice={props.onNotice}
       />
     </div>
   );

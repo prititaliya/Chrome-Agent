@@ -27,7 +27,13 @@ export const test = base.extend<Fixtures>({
     const context = await chromium.launchPersistentContext("", {
       channel: "chromium",
       headless: !process.env.HEADFUL,
-      args: [`--disable-extensions-except=${EXTENSION}`, `--load-extension=${EXTENSION}`],
+      args: [
+        `--disable-extensions-except=${EXTENSION}`,
+        `--load-extension=${EXTENSION}`,
+        // A synthetic microphone that is allowed without a prompt, for dictation tests.
+        "--use-fake-ui-for-media-stream",
+        "--use-fake-device-for-media-stream",
+      ],
     });
     await use(context);
     await context.close();

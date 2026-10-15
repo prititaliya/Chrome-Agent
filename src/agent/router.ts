@@ -1,6 +1,7 @@
 // Auto mode: work out how demanding a message is, then pick the cheapest
 // allowed model that is good enough (free first), with fallbacks.
 
+import { isChatModel, isOpenRouter } from "../providers/catalog";
 import { providerHeaders } from "../providers/http";
 import type { ModelConfig, ModelRef, ModelTier, ProviderConfig, StreamEvent, StreamRequest } from "../providers/types";
 import type { AutoSettings } from "../storage/settings";
@@ -72,6 +73,7 @@ export function autoCandidates(providers: ProviderConfig[], auto: AutoSettings):
   for (const provider of providers) {
     if (!hasKey(provider)) continue;
     for (const model of provider.models) {
+      if (!isChatModel(model.id)) continue;
       if (auto.allowed && !auto.allowed.some((ref) => sameRef(ref, provider, model))) continue;
       out.push({ provider, model, tier: guessTier(model), free: isFree(model) });
     }
@@ -131,24 +133,63 @@ export function classifyByRules(question: string): Classification {
   return { level: "standard", tools, vision, confident: false };
 }
 
-// ---------------------------------------------------------------- Jev
+// ---------------------------------------------------------------- decision models (Jev and others)
 
-export interface JevResult {
+export interface DecisionResult {
   need: Need;
   confidence: number;
   usage: RequestUsage;
 }
 
 export function findOpenRouter(providers: ProviderConfig[]): ProviderConfig | undefined {
-  return providers.find((p) => (p.preset === "openrouter" || /openrouter\.ai/i.test(p.baseUrl)) && p.apiKey.trim() !== "");
+  return providers.find((p) => isOpenRouter(p) && p.apiKey.trim() !== "");
 }
 
 export function decisionsUrl(provider: ProviderConfig): string {
   return `${provider.baseUrl.replace(/\/+$/, "").replace(/\/v1$/, "")}/alpha/decisions`;
 }
 
-export interface JevOptions {
+const JEV_VERSION = /^typesafe\/jev-(\d+)\.(\d+)$/;
+
+/** The newest pinned Jev release among detected decision models (aliases like `~typesafe/jev-latest` are skipped). */
+export function newestJev(ids: string[]): string {
+  let best: { id: string; major: number; minor: number } | null = null;
+  for (const id of ids) {
+    const m = JEV_VERSION.exec(id);
+    if (!m) continue;
+    const major = Number(m[1]);
+    const minor = Number(m[2]);
+    if (!best || major > best.major || (major === best.major && minor > best.minor)) best = { id, major, minor };
+  }
+  return best?.id ?? JEV_MODEL;
+}
+
+/** "typesafe/jev-1.14" → "Jev 1.14", "inception/mercury-decide:free" → "Mercury decide". */
+export function decisionModelName(id: string): string {
+  const base = id.replace(/^~/, "").split("/").pop()!.replace(/:free$/i, "");
+  const words = base.replace(/-(?=\d)/g, " ").replace(/-/g, " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+export interface DecisionModelPick {
   provider: ProviderConfig;
+  modelId: string;
+}
+
+/** Which decision model Auto asks: the chosen one while its provider has a key, else the newest Jev on OpenRouter. */
+export function resolveDecisionModel(providers: ProviderConfig[], auto: AutoSettings, detectedIds: string[] = []): DecisionModelPick | null {
+  if (auto.classifier !== "decision") return null;
+  const ref = auto.decisionModel;
+  const chosen = ref ? providers.find((p) => p.id === ref.providerId && hasKey(p)) : undefined;
+  if (ref && chosen) return { provider: chosen, modelId: ref.modelId };
+  const openRouter = findOpenRouter(providers);
+  return openRouter ? { provider: openRouter, modelId: newestJev(detectedIds) } : null;
+}
+
+export interface DecisionOptions {
+  provider: ProviderConfig;
+  /** Decision model id; defaults to Jev. */
+  model?: string;
   question: string;
   page?: { title: string; url: string };
   earlier?: string[];
@@ -157,7 +198,7 @@ export interface JevOptions {
   fetchImpl?: typeof fetch;
 }
 
-interface JevAnswer {
+interface DecisionAnswer {
   choice?: unknown;
   confidence?: unknown;
   noul?: unknown;
@@ -165,13 +206,20 @@ interface JevAnswer {
 
 const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
 
-export async function classifyWithJev(opts: JevOptions): Promise<JevResult> {
+/** Jev answers in well under a second; other decision models get a little longer before the rules take over. */
+function decisionTimeout(model: string): number {
+  return /jev/i.test(model) ? 1500 : 2500;
+}
+
+export async function classifyWithDecisionModel(opts: DecisionOptions): Promise<DecisionResult> {
+  const model = opts.model ?? JEV_MODEL;
+  const name = decisionModelName(model);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 1500);
+  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? decisionTimeout(model));
   const onAbort = () => controller.abort();
   opts.signal?.addEventListener("abort", onAbort, { once: true });
   const body = {
-    model: JEV_MODEL,
+    model,
     state: {
       request: opts.question.slice(0, 2000),
       ...(opts.page ? { page: `${opts.page.title} - ${opts.page.url}` } : {}),
@@ -199,18 +247,21 @@ export async function classifyWithJev(opts: JevOptions): Promise<JevResult> {
       signal: controller.signal,
       credentials: "omit",
     });
-    if (!response.ok) throw new Error(`Jev returned ${response.status}`);
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`${name} returned ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+    }
     const json = (await response.json()) as {
-      answers?: Record<string, JevAnswer | undefined>;
+      answers?: Record<string, DecisionAnswer | undefined>;
       usage?: { cost?: unknown; input_tokens?: unknown; output_tokens?: unknown };
     };
     const level = json.answers?.level;
     const choice = level?.choice;
-    if (typeof choice !== "string" || !LEVELS.includes(choice as Level)) throw new Error("Jev gave no usable answer");
+    if (typeof choice !== "string" || !LEVELS.includes(choice as Level)) throw new Error(`${name} gave no usable answer`);
     const confidence = num(level?.confidence, 0);
     let chosen = choice as Level;
     if (confidence < 0.55) chosen = LEVELS[Math.min(LEVELS.indexOf(chosen) + 1, LEVELS.length - 1)]!;
-    const yes = (a: JevAnswer | undefined) => num(a?.noul, 0) >= 0.5;
+    const yes = (a: DecisionAnswer | undefined) => num(a?.noul, 0) >= 0.5;
     const event: UsageEvent = {
       type: "usage",
       inputTokens: num(json.usage?.input_tokens, 0),
@@ -293,6 +344,8 @@ export interface RouteOptions {
   stream: (req: StreamRequest) => AsyncGenerator<StreamEvent>;
   signal?: AbortSignal;
   fetchImpl?: typeof fetch;
+  /** Decision model ids detected on OpenRouter, to find the newest Jev. */
+  decisionModels?: string[];
   /** Usage of classifier calls, so they count toward the message. */
   onUsage?: (usage: RequestUsage, by: { provider: ProviderConfig; modelId: string }) => void;
 }
@@ -302,7 +355,9 @@ export interface Route {
   model: ModelConfig;
   need: Need;
   reason: string;
-  classifiedBy: "jev" | "rules" | "model";
+  classifiedBy: "decision" | "rules" | "model";
+  /** The decision model that classified the message. */
+  decisionModel?: string;
   confidence?: number;
   /** Next-best models to try if the pick fails before answering. */
   fallbacks: Candidate[];
@@ -322,21 +377,22 @@ export async function routeModel(opts: RouteOptions): Promise<Route | null> {
   let classifiedBy: Route["classifiedBy"] = "rules";
   let confidence: number | undefined;
 
-  const openRouter = opts.auto.classifier === "jev" ? findOpenRouter(opts.providers) : undefined;
-  if (openRouter) {
+  const decider = resolveDecisionModel(opts.providers, opts.auto, opts.decisionModels);
+  if (decider) {
     try {
-      const jev = await classifyWithJev({
-        provider: openRouter,
+      const decision = await classifyWithDecisionModel({
+        provider: decider.provider,
+        model: decider.modelId,
         question: opts.question,
         page: opts.page,
         earlier: opts.earlier,
         signal: opts.signal,
         fetchImpl: opts.fetchImpl,
       });
-      opts.onUsage?.(jev.usage, { provider: openRouter, modelId: JEV_MODEL });
-      need = jev.need;
-      classifiedBy = "jev";
-      confidence = jev.confidence;
+      opts.onUsage?.(decision.usage, { provider: decider.provider, modelId: decider.modelId });
+      need = decision.need;
+      classifiedBy = "decision";
+      confidence = decision.confidence;
     } catch {
       need = null;
     }
@@ -362,13 +418,19 @@ export async function routeModel(opts: RouteOptions): Promise<Route | null> {
 
   const ranked = rankCandidates(candidates, need, opts.auto.preferFree);
   const pick = ranked[0]!;
-  const by = classifiedBy === "jev" ? `Jev${confidence !== undefined ? ` ${Math.round(confidence * 100)}%` : ""}` : classifiedBy === "model" ? "quick model check" : "rules";
+  const by =
+    classifiedBy === "decision" && decider
+      ? `${decisionModelName(decider.modelId)}${confidence !== undefined ? ` ${Math.round(confidence * 100)}%` : ""}`
+      : classifiedBy === "model"
+        ? "quick model check"
+        : "rules";
   return {
     provider: pick.provider,
     model: pick.model,
     need: { level: need.level, tools: need.tools, vision: need.vision },
     reason: `${describe(need, pick)} (${by})`,
     classifiedBy,
+    ...(classifiedBy === "decision" && decider ? { decisionModel: decider.modelId } : {}),
     confidence,
     fallbacks: ranked.slice(1),
   };

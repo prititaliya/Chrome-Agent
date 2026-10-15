@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import {
   autoCandidates,
   classifyByRules,
-  classifyWithJev,
+  classifyWithDecisionModel,
   classifyWithModel,
+  decisionModelName,
   decisionsUrl,
   guessTier,
   isFree,
   JEV_MODEL,
+  newestJev,
   rankCandidates,
   routeModel,
   type Candidate,
@@ -29,6 +31,9 @@ const OPENROUTER: ProviderConfig = {
     model("openai/gpt-6-luna", { pricing: { input: 5, output: 20 }, vision: true }),
     model("deepseek/deepseek-v4.1-flash", { pricing: { input: 0.1, output: 0.4 } }),
     model("vendor/chatty", { pricing: { input: 1, output: 3 }, tools: false }),
+    // Free, so Auto would rank it first if decision models weren't excluded.
+    model("inception/mercury-decide:free", { pricing: { input: 0, output: 0 } }),
+    model("openai/whisper-large-v3-turbo"),
   ],
 };
 const NOKEY: ProviderConfig = { id: "nokey", name: "No key", baseUrl: "https://x/v1", apiKey: "", wire: "chat", models: [model("best-pro")] };
@@ -114,6 +119,11 @@ describe("rule classifier", () => {
 describe("ranking", () => {
   const all = autoCandidates([OPENROUTER, NOKEY], auto());
 
+  it("never offers decision or speech-to-text models as chat models", () => {
+    expect(ids(all)).not.toContain("inception/mercury-decide:free");
+    expect(ids(all)).not.toContain("openai/whisper-large-v3-turbo");
+  });
+
   it("only uses allowed models whose provider has a key", () => {
     expect(ids(all)).not.toContain("best-pro");
     const allowed = autoCandidates([OPENROUTER], auto({ allowed: [{ providerId: "openrouter", modelId: "openai/gpt-6-luna" }] }));
@@ -175,9 +185,16 @@ describe("Jev classifier", () => {
     expect(decisionsUrl(OPENROUTER)).toBe("https://openrouter.ai/api/alpha/decisions");
   });
 
+  it("names decision models and finds the newest Jev", () => {
+    expect(decisionModelName("typesafe/jev-1.14")).toBe("Jev 1.14");
+    expect(decisionModelName("~perplexity/pplx-decider-latest")).toBe("Pplx decider latest");
+    expect(newestJev(["typesafe/jev-1.9", "typesafe/jev-1.13", "~typesafe/jev-latest"])).toBe("typesafe/jev-1.13");
+    expect(newestJev([])).toBe(JEV_MODEL);
+  });
+
   it("sends one request with the three questions and maps the answer", async () => {
     const { impl, calls } = jevFetch(answer("standard", 0.9, 0.97, 0.2));
-    const result = await classifyWithJev({
+    const result = await classifyWithDecisionModel({
       provider: OPENROUTER,
       question: "Book a table for two",
       page: { title: "Bistro", url: "https://bistro.test" },
@@ -196,16 +213,16 @@ describe("Jev classifier", () => {
 
   it("moves up a level when Jev is unsure", async () => {
     const { impl } = jevFetch(answer("simple", 0.4));
-    expect((await classifyWithJev({ provider: OPENROUTER, question: "x", fetchImpl: impl })).need.level).toBe("standard");
+    expect((await classifyWithDecisionModel({ provider: OPENROUTER, question: "x", fetchImpl: impl })).need.level).toBe("standard");
   });
 
   it("routes with Jev and records its cost", async () => {
     const { impl } = jevFetch(answer("complex", 0.95, 0.9));
     const onUsage = vi.fn();
     const route = await routeModel({ providers: [OPENROUTER], auto: auto(), question: "Plan my trip", stream: scriptedStream("").stream, fetchImpl: impl, onUsage });
-    expect(route?.classifiedBy).toBe("jev");
+    expect(route?.classifiedBy).toBe("decision");
     expect(route?.model.id).toBe("openai/gpt-6-luna");
-    expect(route?.reason).toContain("Jev 95%");
+    expect(route?.reason).toContain("Jev 1.13 95%");
     expect(onUsage).toHaveBeenCalledWith(expect.objectContaining({ cost: 0.00002 }), expect.objectContaining({ modelId: JEV_MODEL }));
   });
 
@@ -228,7 +245,7 @@ describe("Jev classifier", () => {
       (_url: string, init: RequestInit) =>
         new Promise<Response>((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")))),
     ) as unknown as typeof fetch;
-    await expect(classifyWithJev({ provider: OPENROUTER, question: "x", fetchImpl: slow, timeoutMs: 20 })).rejects.toThrow();
+    await expect(classifyWithDecisionModel({ provider: OPENROUTER, question: "x", fetchImpl: slow, timeoutMs: 20 })).rejects.toThrow();
   });
 
   it("uses the tiny model only when the rules are unsure and Jev is off", async () => {
@@ -240,6 +257,30 @@ describe("Jev classifier", () => {
     expect(calls[0]!.model.id).toBe("z-ai/glm-5.3:free");
     expect(route?.classifiedBy).toBe("model");
     expect(route?.model.id).toBe("openai/gpt-6-luna");
+  });
+
+  it("asks the decision model chosen in Settings", async () => {
+    const { impl, calls } = jevFetch(answer("standard", 0.8, 0.9));
+    const chosen = auto({ decisionModel: { providerId: "openrouter", modelId: "inception/mercury-decide:free" } });
+    const route = await routeModel({ providers: [OPENROUTER], auto: chosen, question: "Book a table", stream: scriptedStream("").stream, fetchImpl: impl });
+    expect(calls[0]!.body["model"]).toBe("inception/mercury-decide:free");
+    expect(calls[0]!.url).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(route?.classifiedBy).toBe("decision");
+    expect(route?.decisionModel).toBe("inception/mercury-decide:free");
+    expect(route?.reason).toContain("Mercury decide 80%");
+  });
+
+  it("defaults to the newest pinned Jev that OpenRouter lists", async () => {
+    const { impl, calls } = jevFetch(answer("simple", 0.9));
+    await routeModel({
+      providers: [OPENROUTER],
+      auto: auto(),
+      question: "hi",
+      stream: scriptedStream("").stream,
+      fetchImpl: impl,
+      decisionModels: ["~typesafe/jev-latest", "typesafe/jev-1.13", "typesafe/jev-1.14", "cloudflare/clef"],
+    });
+    expect(calls[0]!.body["model"]).toBe("typesafe/jev-1.14");
   });
 
   it("returns null when no model is usable", async () => {

@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { isChatModel } from "../../providers/catalog";
 import type { ProviderConfig } from "../../providers/types";
 import { clearConversations } from "../../storage/conversations";
 import { removeProvider, saveSettings, upsertProvider, type Settings } from "../../storage/settings";
 import AutoModelSettings from "./AutoModelSettings";
 import ProviderEditor, { blankProvider } from "./ProviderEditor";
+import VoiceInputSettings from "./VoiceInputSettings";
 
 interface Props {
   providers: ProviderConfig[];
@@ -25,8 +27,9 @@ export default function SettingsView({ providers, settings }: Props) {
           onSave={(provider) => {
             void upsertProvider(provider).then(async () => {
               // First usable model becomes the default so chat works right away.
-              if (!settings.model && provider.models[0] && provider.apiKey) {
-                await saveSettings({ model: { providerId: provider.id, modelId: provider.models[0].id } });
+              const first = provider.models.find((m) => isChatModel(m.id));
+              if (!settings.model && first && provider.apiKey) {
+                await saveSettings({ model: { providerId: provider.id, modelId: first.id } });
               }
               setEditing(null);
               setNotice(`Saved ${provider.name}.`);
@@ -86,6 +89,8 @@ export default function SettingsView({ providers, settings }: Props) {
       </section>
 
       <AutoModelSettings providers={providers} settings={settings} />
+
+      <VoiceInputSettings providers={providers} settings={settings} />
 
       <section>
         <h2>Browser control</h2>

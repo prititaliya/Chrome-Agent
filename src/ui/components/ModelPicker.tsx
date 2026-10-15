@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatPrice, formatTokens } from "../../agent/usage";
+import { isChatModel } from "../../providers/catalog";
 import type { ModelConfig, ModelRef, ProviderConfig } from "../../providers/types";
 import { CheckIcon, ChevronIcon, SearchIcon, SparkIcon } from "./Icons";
 
@@ -66,7 +67,9 @@ export default function ModelPicker({ providers, value, onChange, onManage, disa
       .filter((p) => p.models.length > 0)
       .map((p) => ({
         provider: p,
-        models: p.models.filter((m) => q === "" || m.id.toLowerCase().includes(q) || (m.label ?? "").toLowerCase().includes(q) || p.name.toLowerCase().includes(q)),
+        models: p.models.filter(
+          (m) => isChatModel(m.id) && (q === "" || m.id.toLowerCase().includes(q) || (m.label ?? "").toLowerCase().includes(q) || p.name.toLowerCase().includes(q)),
+        ),
       }))
       .filter((g) => g.models.length > 0)
       .sort((a, b) => Number(Boolean(b.provider.apiKey)) - Number(Boolean(a.provider.apiKey)));

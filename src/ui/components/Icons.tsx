@@ -110,4 +110,12 @@ export const QuestionIcon = ({ size }: IconProps) =>
     size,
   );
 export const QueueIcon = ({ size }: IconProps) => svg(<path d="M4 6h16M4 12h10M4 18h7M17 15v6M14 18h6" />, size);
+export const MicIcon = ({ size }: IconProps) =>
+  svg(
+    <>
+      <rect x="9" y="2" width="6" height="12" rx="3" />
+      <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
+    </>,
+    size,
+  );
 export const PencilIcon = ({ size }: IconProps) => svg(<path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />, size);
